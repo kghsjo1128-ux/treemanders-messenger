@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>트리맨더스</title>
-  <!-- treemanders-build: 2026-04-05-bulk-excel -->
+  <!-- treemanders-build: 2026-04-05-excel-in-regions -->
   <style>
     html {
       -webkit-text-size-adjust: 100%;
@@ -311,7 +311,7 @@ function adminHasPerm(email, permKey) {
 
 function adminCanSeeAdminMenu(email, menuId) {
   if (menuId === "roles") return isSuperAdminEmail(email);
-  const perm = { members: "members", notices: "notices", holidays: "holidays", regions: "regions", jobs: "jobs", signups: "signups", bulk: "regions" }[menuId];
+  const perm = { members: "members", notices: "notices", holidays: "holidays", regions: "regions", jobs: "jobs", signups: "signups" }[menuId];
   if (!perm) return false;
   return adminHasPerm(email, perm);
 }
@@ -4202,6 +4202,10 @@ function AdminRegionDispatch({ employeeApprovalsList = [] }) {
   const [formPersonKeys, setFormPersonKeys] = useState([]);
   const [formRegions, setFormRegions] = useState([]);
   const [formMsg, setFormMsg] = useState("");
+  const [excelBusy, setExcelBusy] = useState(false);
+  const [excelMsg, setExcelMsg] = useState("");
+  const [excelPreview, setExcelPreview] = useState(null);
+  const excelFileRef = useRef(null);
 
   useEffect(() => { setPickDay(null); }, [ym]);
 
@@ -4372,8 +4376,100 @@ function AdminRegionDispatch({ employeeApprovalsList = [] }) {
   const cannotAddAssignment =
     pickDay != null && (employeeOptionsAvailable.length === 0 || regionsAvailable.length === 0);
 
+  const onExcelDownloadTemplate = async () => {
+    setExcelMsg("");
+    try {
+      setExcelBusy(true);
+      await downloadTreemandersBulkTemplate();
+      setExcelMsg("양식 파일을 받았습니다. 직원·구역배정 시트를 채운 뒤 아래에서 업로드하세요.");
+    } catch (e) {
+      setExcelMsg(`양식 생성 실패: ${e && e.message ? e.message : String(e)}`);
+    } finally {
+      setExcelBusy(false);
+    }
+  };
+
+  const onExcelFile = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setExcelMsg("");
+    setExcelPreview(null);
+    try {
+      setExcelBusy(true);
+      const buf = await f.arrayBuffer();
+      const parsed = await parseTreemandersBulkExcelBuffer(buf);
+      if (parsed.errors.length) {
+        setExcelMsg(parsed.errors.join("\n"));
+        setExcelPreview(null);
+      } else {
+        setExcelPreview(parsed);
+        setExcelMsg(`직원 ${parsed.rosterOut.length}명, 구역 배정 ${parsed.assignOut.length}건을 읽었습니다. 적용하기를 누르면 반영됩니다.`);
+      }
+    } catch (err) {
+      setExcelMsg(`파일 읽기 실패: ${err && err.message ? err.message : String(err)}`);
+      setExcelPreview(null);
+    } finally {
+      setExcelBusy(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  const onExcelApply = () => {
+    if (!excelPreview) return;
+    if (!window.confirm("로컬 직원 로스터에 합치고, 구역 배정은 같은 년월·일·구역을 덮어씁니다. 계속할까요?")) return;
+    try {
+      setExcelBusy(true);
+      applyTreemandersBulkData({ rosterOut: excelPreview.rosterOut, assignOut: excelPreview.assignOut });
+      setAssignments(getRegionAssignments());
+      setRegions(getSavedRegions());
+      setZoneBulkText(getSavedRegions().join(", "));
+      setEmployeeRosterTick((t) => t + 1);
+      setExcelMsg(`적용 완료: 직원 ${excelPreview.rosterOut.length}명, 구역 배정 ${excelPreview.assignOut.length}건.`);
+      setExcelPreview(null);
+    } catch (e) {
+      setExcelMsg(`적용 실패: ${e && e.message ? e.message : String(e)}`);
+    } finally {
+      setExcelBusy(false);
+    }
+  };
+
   return (
     <div>
+      <div style={{ ...styles.card, marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>엑셀 양식 · 일괄 반영</div>
+        <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12, lineHeight: 1.55 }}>
+          <strong style={{ color: COLORS.text }}>양식 받기</strong>로 내려받은 파일에 직원·구역배정을 입력한 뒤 업로드하면 이 브라우저의 <strong style={{ color: COLORS.text }}>직원 로스터</strong>와 아래 <strong style={{ color: COLORS.text }}>구역 배정</strong>에 반영됩니다. (Firebase 가입 승인은 변경되지 않습니다.)
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12, alignItems: "center" }}>
+          <button type="button" style={{ ...styles.primaryBtn, opacity: excelBusy ? 0.7 : 1 }} disabled={excelBusy} onClick={onExcelDownloadTemplate}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Icons.Download /> 양식 받기 (.xlsx)
+            </span>
+          </button>
+          <input ref={excelFileRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={onExcelFile} />
+          <button
+            type="button"
+            style={{ ...styles.primaryBtn, background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, color: COLORS.text }}
+            disabled={excelBusy}
+            onClick={() => excelFileRef.current && excelFileRef.current.click()}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Icons.Upload /> 엑셀 업로드
+            </span>
+          </button>
+          {excelPreview ? (
+            <button type="button" style={{ ...styles.primaryBtn, background: COLORS.success, color: "#fff" }} disabled={excelBusy} onClick={onExcelApply}>
+              적용하기
+            </button>
+          ) : null}
+        </div>
+        {excelMsg ? (
+          <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, color: excelMsg.includes("실패") ? COLORS.danger : COLORS.textMuted }}>
+            {excelMsg}
+          </div>
+        ) : null}
+      </div>
+
       <div style={{ ...styles.card, marginBottom: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>기본 구역 코드</div>
         <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
@@ -4821,7 +4917,7 @@ function AdminEmployeeHrList() {
 
 function pickInitialAdminTab(email) {
   if (isSuperAdminEmail(email)) return "roles";
-  const order = ["members", "signups", "notices", "holidays", "regions", "bulk", "jobs"];
+  const order = ["members", "signups", "notices", "holidays", "regions", "jobs"];
   for (const id of order) {
     if (adminCanSeeAdminMenu(email, id)) return id;
   }
@@ -5022,105 +5118,6 @@ function AdminEmployeeFixedOffEditor({ fixedOffByEmail }) {
 }
 
 // ============================================================
-// 관리자: 엑셀 일괄 등록 (양식 다운로드 / 업로드)
-// ============================================================
-function AdminBulkExcelImport() {
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [preview, setPreview] = useState(null);
-  const fileRef = useRef(null);
-
-  const onDownloadTemplate = async () => {
-    setMsg("");
-    try {
-      setBusy(true);
-      await downloadTreemandersBulkTemplate();
-      setMsg("양식 파일을 받았습니다. 직원·구역배정 시트를 채운 뒤 아래에서 업로드하세요.");
-    } catch (e) {
-      setMsg(`양식 생성 실패: ${e && e.message ? e.message : String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onFile = async (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    setMsg("");
-    setPreview(null);
-    try {
-      setBusy(true);
-      const buf = await f.arrayBuffer();
-      const parsed = await parseTreemandersBulkExcelBuffer(buf);
-      if (parsed.errors.length) {
-        setMsg(parsed.errors.join("\n"));
-        setPreview(null);
-      } else {
-        setPreview(parsed);
-        setMsg(`직원 ${parsed.rosterOut.length}명, 구역 배정 ${parsed.assignOut.length}건을 읽었습니다. 적용하기를 누르면 이 브라우저에 반영됩니다.`);
-      }
-    } catch (err) {
-      setMsg(`파일 읽기 실패: ${err && err.message ? err.message : String(err)}`);
-      setPreview(null);
-    } finally {
-      setBusy(false);
-      if (e.target) e.target.value = "";
-    }
-  };
-
-  const onApply = () => {
-    if (!preview) return;
-    if (!window.confirm("로컬 직원 로스터에 합치고, 구역 배정은 같은 년월·일·구역을 덮어씁니다. 계속할까요?")) return;
-    try {
-      setBusy(true);
-      applyTreemandersBulkData({ rosterOut: preview.rosterOut, assignOut: preview.assignOut });
-      setMsg(`적용 완료: 직원 ${preview.rosterOut.length}명, 구역 배정 ${preview.assignOut.length}건.`);
-      setPreview(null);
-    } catch (e) {
-      setMsg(`적용 실패: ${e && e.message ? e.message : String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 14, lineHeight: 1.55 }}>
-        <strong style={{ color: COLORS.text }}>양식 다운로드</strong> 후 엑셀에서 입력하고, 같은 파일을 업로드하면 이 기기(브라우저)의 <strong style={{ color: COLORS.text }}>직원 로스터</strong>와 <strong style={{ color: COLORS.text }}>구역 배정</strong>에 반영됩니다. Firebase <strong style={{ color: COLORS.text }}>가입 승인</strong>은 이 기능으로 바꾸지 않습니다.
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16, alignItems: "center" }}>
-        <button type="button" style={{ ...styles.primaryBtn, opacity: busy ? 0.7 : 1 }} disabled={busy} onClick={onDownloadTemplate}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <Icons.Download /> 양식 받기 (.xlsx)
-          </span>
-        </button>
-        <input ref={fileRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: "none" }} onChange={onFile} />
-        <button
-          type="button"
-          style={{ ...styles.primaryBtn, background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, color: COLORS.text }}
-          disabled={busy}
-          onClick={() => fileRef.current && fileRef.current.click()}
-        >
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <Icons.Upload /> 엑셀 업로드
-          </span>
-        </button>
-        {preview ? (
-          <button type="button" style={{ ...styles.primaryBtn, background: COLORS.success, color: "#fff" }} disabled={busy} onClick={onApply}>
-            적용하기
-          </button>
-        ) : null}
-      </div>
-      {msg ? (
-        <div style={{ ...styles.card, fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, color: msg.includes("실패") ? COLORS.danger : COLORS.textMuted, marginBottom: 14 }}>
-          {msg}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// ============================================================
 // Component: Admin Panel
 // ============================================================
 function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail, employeeApprovalsList = [] }) {
@@ -5140,7 +5137,6 @@ function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail, employ
     if (adminCanSeeAdminMenu(actorEmail, "notices")) items.push({ id: "notices", label: "공지사항 관리", icon: <Icons.Notice /> });
     if (adminCanSeeAdminMenu(actorEmail, "holidays")) items.push({ id: "holidays", label: "휴무 승인", icon: <Icons.Holiday /> });
     if (adminCanSeeAdminMenu(actorEmail, "regions")) items.push({ id: "regions", label: "구역 배정", icon: <Icons.MapPin /> });
-    if (adminCanSeeAdminMenu(actorEmail, "bulk")) items.push({ id: "bulk", label: "엑셀 일괄", icon: <Icons.Upload /> });
     if (adminCanSeeAdminMenu(actorEmail, "jobs")) items.push({ id: "jobs", label: "구인 공고", icon: <Icons.Briefcase /> });
     if (adminCanSeeAdminMenu(actorEmail, "signups")) items.push({ id: "signups", label: "가입 승인", icon: <Icons.People /> });
     return items;
@@ -5265,8 +5261,6 @@ function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail, employ
             {activeMenu === "notices" && <NoticeBoard adminMode authorDefault={actorEmail || "관리자"} />}
 
             {activeMenu === "regions" && <AdminRegionDispatch employeeApprovalsList={employeeApprovalsList} />}
-
-            {activeMenu === "bulk" && <AdminBulkExcelImport />}
 
             {/* Holidays approval + 스케줄러 */}
             {activeMenu === "holidays" && (
