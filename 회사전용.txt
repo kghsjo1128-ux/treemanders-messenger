@@ -1,0 +1,1059 @@
+import { useState, useEffect, useRef } from "react";
+// Firebase(App+Analytics)는 브라우저용 트리맨더스.html 상단에서 CDN Compat으로 초기화됨(window.firebaseApp).
+
+// ============================================================
+// 사내 메신저 "트리맨더스" - KakaoTalk Style Company Messenger
+// ============================================================
+
+const COLORS = {
+  primary: "#FFE812",
+  primaryDark: "#F5D800",
+  dark: "#1A1A1A",
+  darkBg: "#141517",
+  cardBg: "#1E2023",
+  cardBgHover: "#262930",
+  text: "#EAEAEA",
+  textMuted: "#8B8E94",
+  border: "#2A2D33",
+  accent: "#5B6EF5",
+  accentLight: "#7B8BFF",
+  success: "#4AD295",
+  warning: "#FFB84D",
+  danger: "#FF6B6B",
+  chatBubbleMine: "#FFE812",
+  chatBubbleOther: "#2A2D33",
+  white: "#fff",
+};
+
+const FONT = `'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+
+// ============================================================
+// Mock Data
+// ============================================================
+const MOCK_USERS = [
+  { id: 1, name: "김민수", email: "minsu@company.com", dept: "개발팀", avatar: "🧑‍💻", status: "online" },
+  { id: 2, name: "이지현", email: "jihyun@company.com", dept: "디자인팀", avatar: "👩‍🎨", status: "online" },
+  { id: 3, name: "박준호", email: "junho@company.com", dept: "마케팅팀", avatar: "👨‍💼", status: "away" },
+  { id: 4, name: "최서연", email: "seoyeon@company.com", dept: "인사팀", avatar: "👩‍💼", status: "offline" },
+  { id: 5, name: "정우진", email: "woojin@company.com", dept: "개발팀", avatar: "🧑‍💻", status: "online" },
+];
+
+const MOCK_NOTICES = [
+  { id: 1, title: "4월 전체 회의 안내", content: "4월 7일 월요일 오전 10시 대회의실에서 전체 회의가 진행됩니다. 전 직원 필수 참석 바랍니다.", date: "2026-04-03", author: "관리자", pinned: true },
+  { id: 2, title: "사내 네트워크 점검 공지", content: "4월 5일 토요일 02:00~06:00 사이 네트워크 점검이 예정되어 있습니다.", date: "2026-04-02", author: "IT팀" },
+  { id: 3, title: "신규 복리후생 제도 안내", content: "5월부터 점심 식대 지원금이 인상됩니다. 자세한 사항은 인사팀에 문의해주세요.", date: "2026-04-01", author: "인사팀" },
+];
+
+const MOCK_SCHEDULES = [
+  { id: 1, title: "스프린트 회의", date: "2026-04-07", time: "10:00", type: "meeting", color: COLORS.accent },
+  { id: 2, title: "디자인 리뷰", date: "2026-04-08", time: "14:00", type: "review", color: COLORS.warning },
+  { id: 3, title: "배포일", date: "2026-04-10", time: "09:00", type: "deploy", color: COLORS.danger },
+  { id: 4, title: "팀 회식", date: "2026-04-11", time: "18:30", type: "social", color: COLORS.success },
+];
+
+const MOCK_HOLIDAYS = [
+  { id: 1, user: "김민수", dates: "4/14 ~ 4/16", reason: "개인 사유", status: "pending" },
+  { id: 2, user: "이지현", dates: "4/21 ~ 4/22", reason: "가족 행사", status: "approved" },
+  { id: 3, user: "박준호", dates: "4/28", reason: "병원 방문", status: "approved" },
+];
+
+const MOCK_JOBS = [
+  { id: 1, title: "프론트엔드 개발자", dept: "개발팀", type: "정규직", salary: "5,000~7,000만원", deadline: "2026-04-30", skills: ["React", "TypeScript", "Next.js"], description: "성장하는 스타트업에서 프론트엔드 개발자를 모집합니다." },
+  { id: 2, title: "UI/UX 디자이너", dept: "디자인팀", type: "정규직", salary: "4,500~6,000만원", deadline: "2026-05-15", skills: ["Figma", "Prototyping", "User Research"], description: "창의적인 디자이너를 기다립니다." },
+];
+
+// ============================================================
+// Icons (inline SVG components)
+// ============================================================
+const Icons = {
+  Chat: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+  People: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  Notice: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"/></svg>,
+  Calendar: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  Holiday: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 10H3v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7z"/><path d="M3 10V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4"/><path d="M21 13l-3-3-3 3"/><path d="M18 10v6"/></svg>,
+  Admin: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  Send: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>,
+  Back: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>,
+  Search: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  Plus: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  Pin: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6h2v-6h5v-2z"/></svg>,
+  Eye: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+  Lock: () => <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+  Mail: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+  Briefcase: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>,
+  Download: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  Check: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>,
+  Close: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  Logout: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+};
+
+// ============================================================
+// Styles
+// ============================================================
+const styles = {
+  app: {
+    fontFamily: FONT,
+    width: "100%",
+    maxWidth: 480,
+    margin: "0 auto",
+    height: "100vh",
+    background: COLORS.darkBg,
+    color: COLORS.text,
+    display: "flex",
+    flexDirection: "column",
+    position: "relative",
+    overflow: "hidden",
+  },
+  // Login
+  loginContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100%",
+    padding: 32,
+    background: `linear-gradient(180deg, ${COLORS.darkBg} 0%, #1a1b20 100%)`,
+  },
+  loginLogo: {
+    fontSize: 56,
+    marginBottom: 8,
+  },
+  loginTitle: {
+    fontSize: 28,
+    fontWeight: 800,
+    color: COLORS.primary,
+    marginBottom: 4,
+    letterSpacing: -1,
+  },
+  loginSubtitle: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    marginBottom: 36,
+  },
+  input: {
+    width: "100%",
+    padding: "14px 16px",
+    background: COLORS.cardBg,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    color: COLORS.text,
+    fontSize: 14,
+    outline: "none",
+    marginBottom: 12,
+    fontFamily: FONT,
+    boxSizing: "border-box",
+    transition: "border-color 0.2s",
+  },
+  primaryBtn: {
+    width: "100%",
+    padding: "14px",
+    background: COLORS.primary,
+    color: COLORS.dark,
+    border: "none",
+    borderRadius: 12,
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: FONT,
+    transition: "all 0.2s",
+    marginTop: 4,
+  },
+  linkBtn: {
+    background: "none",
+    border: "none",
+    color: COLORS.textMuted,
+    fontSize: 13,
+    cursor: "pointer",
+    padding: "8px 12px",
+    fontFamily: FONT,
+  },
+  // Header
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 20px",
+    borderBottom: `1px solid ${COLORS.border}`,
+    background: COLORS.darkBg,
+    minHeight: 56,
+    position: "sticky",
+    top: 0,
+    zIndex: 10,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 800,
+    letterSpacing: -0.5,
+  },
+  // Tab bar
+  tabBar: {
+    display: "flex",
+    borderTop: `1px solid ${COLORS.border}`,
+    background: COLORS.darkBg,
+    padding: "6px 0 env(safe-area-inset-bottom, 8px)",
+    position: "sticky",
+    bottom: 0,
+  },
+  tab: (active) => ({
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 3,
+    padding: "8px 0",
+    background: "none",
+    border: "none",
+    color: active ? COLORS.primary : COLORS.textMuted,
+    fontSize: 10,
+    fontWeight: active ? 700 : 500,
+    cursor: "pointer",
+    fontFamily: FONT,
+    transition: "color 0.2s",
+  }),
+  // Content area
+  content: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "0",
+  },
+  // Chat list item
+  chatItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    padding: "14px 20px",
+    cursor: "pointer",
+    transition: "background 0.15s",
+    borderBottom: `1px solid ${COLORS.border}22`,
+  },
+  avatar: (size = 46) => ({
+    width: size,
+    height: size,
+    borderRadius: "50%",
+    background: `${COLORS.primary}22`,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: size * 0.5,
+    flexShrink: 0,
+  }),
+  // Chat room
+  chatRoom: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100%",
+  },
+  messagesArea: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "16px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  bubbleMine: {
+    alignSelf: "flex-end",
+    background: COLORS.chatBubbleMine,
+    color: COLORS.dark,
+    padding: "10px 14px",
+    borderRadius: "18px 18px 4px 18px",
+    maxWidth: "75%",
+    fontSize: 14,
+    lineHeight: 1.5,
+    wordBreak: "break-word",
+  },
+  bubbleOther: {
+    alignSelf: "flex-start",
+    background: COLORS.chatBubbleOther,
+    color: COLORS.text,
+    padding: "10px 14px",
+    borderRadius: "18px 18px 18px 4px",
+    maxWidth: "75%",
+    fontSize: 14,
+    lineHeight: 1.5,
+    wordBreak: "break-word",
+  },
+  chatInput: {
+    display: "flex",
+    gap: 8,
+    padding: "12px 16px",
+    borderTop: `1px solid ${COLORS.border}`,
+    background: COLORS.darkBg,
+  },
+  // Cards
+  card: {
+    background: COLORS.cardBg,
+    borderRadius: 16,
+    padding: "18px 20px",
+    marginBottom: 12,
+    border: `1px solid ${COLORS.border}`,
+    transition: "all 0.2s",
+  },
+  // Badge
+  badge: (color = COLORS.accent) => ({
+    display: "inline-block",
+    padding: "3px 10px",
+    borderRadius: 20,
+    fontSize: 11,
+    fontWeight: 600,
+    background: `${color}22`,
+    color: color,
+  }),
+  // Admin styles
+  adminSidebar: {
+    width: 240,
+    background: COLORS.cardBg,
+    borderRight: `1px solid ${COLORS.border}`,
+    padding: "20px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+  adminContent: {
+    flex: 1,
+    overflowY: "auto",
+    padding: 24,
+  },
+  adminMenuItem: (active) => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "12px 20px",
+    background: active ? `${COLORS.primary}15` : "transparent",
+    color: active ? COLORS.primary : COLORS.textMuted,
+    border: "none",
+    cursor: "pointer",
+    fontSize: 14,
+    fontWeight: active ? 600 : 400,
+    fontFamily: FONT,
+    textAlign: "left",
+    width: "100%",
+    borderLeft: active ? `3px solid ${COLORS.primary}` : "3px solid transparent",
+    transition: "all 0.2s",
+  }),
+  // Modal
+  modal: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
+    padding: 20,
+  },
+  modalContent: {
+    background: COLORS.cardBg,
+    borderRadius: 20,
+    padding: 28,
+    width: "100%",
+    maxWidth: 420,
+    maxHeight: "80vh",
+    overflowY: "auto",
+    border: `1px solid ${COLORS.border}`,
+  },
+  // Tag
+  tag: {
+    display: "inline-block",
+    padding: "4px 10px",
+    borderRadius: 8,
+    fontSize: 12,
+    fontWeight: 500,
+    background: `${COLORS.accent}20`,
+    color: COLORS.accentLight,
+    marginRight: 6,
+    marginBottom: 4,
+  },
+  // Poster
+  poster: {
+    background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.primaryDark} 50%, #E8C800 100%)`,
+    borderRadius: 20,
+    padding: 32,
+    color: COLORS.dark,
+    position: "relative",
+    overflow: "hidden",
+  },
+};
+
+// ============================================================
+// Component: Login Screen
+// ============================================================
+function LoginScreen({ onLogin, onGoRegister, onGoFindAccount }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const handleLogin = () => {
+    if (!email || !password) { setError("이메일과 비밀번호를 입력해주세요."); return; }
+    onLogin({ id: 1, name: "김민수", email, dept: "개발팀", avatar: "🧑‍💻" });
+  };
+
+  return (
+    <div style={styles.loginContainer}>
+      <div style={{ textAlign: "center", marginBottom: 32, animation: "fadeIn 0.6s ease" }}>
+        <div style={styles.loginLogo}>💬</div>
+        <div style={styles.loginTitle}>트리맨더스</div>
+        <div style={styles.loginSubtitle}>우리 회사 전용 메신저</div>
+        <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 6, textAlign: "center", lineHeight: 1.4 }}>이메일과 비밀번호로 로그인합니다.<br />처음이면 아래 <strong style={{ color: COLORS.text }}>이메일로 회원가입</strong>을 눌러주세요.</div>
+      </div>
+      <div style={{ width: "100%", maxWidth: 320, animation: "slideUp 0.5s ease" }}>
+        <input style={styles.input} placeholder="이메일" value={email} onChange={e => setEmail(e.target.value)} onFocus={e => e.target.style.borderColor = COLORS.primary} onBlur={e => e.target.style.borderColor = COLORS.border} />
+        <input style={styles.input} type="password" placeholder="비밀번호" value={password} onChange={e => setPassword(e.target.value)} onFocus={e => e.target.style.borderColor = COLORS.primary} onBlur={e => e.target.style.borderColor = COLORS.border} />
+        {error && <div style={{ color: COLORS.danger, fontSize: 13, marginBottom: 8, textAlign: "center" }}>{error}</div>}
+        <button style={styles.primaryBtn} onClick={handleLogin} onMouseOver={e => e.target.style.transform = "translateY(-1px)"} onMouseOut={e => e.target.style.transform = "none"}>로그인</button>
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
+          <button style={styles.linkBtn} onClick={onGoRegister}>이메일로 회원가입</button>
+          <span style={{ color: COLORS.border, lineHeight: "36px" }}>|</span>
+          <button style={styles.linkBtn} onClick={onGoFindAccount}>계정 찾기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Register Screen
+// ============================================================
+function RegisterScreen({ onBack, onRegister }) {
+  const [form, setForm] = useState({ name: "", email: "", password: "", passwordConfirm: "", dept: "" });
+  const [error, setError] = useState("");
+
+  const handleRegister = () => {
+    if (!form.name || !form.email || !form.password) { setError("필수 항목을 입력해주세요."); return; }
+    if (form.password !== form.passwordConfirm) { setError("비밀번호가 일치하지 않습니다."); return; }
+    if (form.password.length < 6) { setError("비밀번호는 6자 이상이어야 합니다."); return; }
+    onRegister();
+  };
+
+  return (
+    <div style={styles.loginContainer}>
+      <div style={{ width: "100%", maxWidth: 320 }}>
+        <button style={{ ...styles.linkBtn, padding: "0 0 20px", color: COLORS.text }} onClick={onBack}>← 돌아가기</button>
+        <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>이메일로 회원가입</div>
+        <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 28 }}>회사 이메일(또는 사용 중인 이메일)과 비밀번호로 트리맨더스 계정을 만듭니다.</div>
+        <input style={styles.input} placeholder="이름 *" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+        <input style={styles.input} placeholder="이메일 *" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+        <input style={styles.input} placeholder="부서 (선택)" value={form.dept} onChange={e => setForm({ ...form, dept: e.target.value })} />
+        <input style={styles.input} type="password" placeholder="비밀번호 * (6자 이상)" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+        <input style={styles.input} type="password" placeholder="비밀번호 확인 *" value={form.passwordConfirm} onChange={e => setForm({ ...form, passwordConfirm: e.target.value })} />
+        {error && <div style={{ color: COLORS.danger, fontSize: 13, marginBottom: 8, textAlign: "center" }}>{error}</div>}
+        <button style={styles.primaryBtn} onClick={handleRegister}>이메일로 가입하기</button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Find Account Screen
+// ============================================================
+function FindAccountScreen({ onBack }) {
+  const [tab, setTab] = useState("id");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [result, setResult] = useState("");
+
+  const handleFind = () => {
+    if (tab === "id") {
+      if (!name) return;
+      setResult("조회 결과: min***@company.com");
+    } else {
+      if (!email) return;
+      setResult("임시 비밀번호가 이메일로 발송되었습니다.");
+    }
+  };
+
+  return (
+    <div style={styles.loginContainer}>
+      <div style={{ width: "100%", maxWidth: 320 }}>
+        <button style={{ ...styles.linkBtn, padding: "0 0 20px", color: COLORS.text }} onClick={onBack}>← 돌아가기</button>
+        <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 24 }}>계정 찾기</div>
+        <div style={{ display: "flex", gap: 0, marginBottom: 24 }}>
+          {["id", "pw"].map(t => (
+            <button key={t} onClick={() => { setTab(t); setResult(""); }} style={{
+              flex: 1, padding: "12px", border: "none", fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: "pointer",
+              background: tab === t ? COLORS.primary : COLORS.cardBg,
+              color: tab === t ? COLORS.dark : COLORS.textMuted,
+              borderRadius: t === "id" ? "12px 0 0 12px" : "0 12px 12px 0",
+            }}>
+              {t === "id" ? "아이디 찾기" : "비밀번호 찾기"}
+            </button>
+          ))}
+        </div>
+        {tab === "id" ? (
+          <input style={styles.input} placeholder="이름을 입력하세요" value={name} onChange={e => setName(e.target.value)} />
+        ) : (
+          <input style={styles.input} placeholder="이메일을 입력하세요" value={email} onChange={e => setEmail(e.target.value)} />
+        )}
+        <button style={styles.primaryBtn} onClick={handleFind}>{tab === "id" ? "아이디 찾기" : "비밀번호 재설정"}</button>
+        {result && (
+          <div style={{ marginTop: 16, padding: 16, background: `${COLORS.success}15`, borderRadius: 12, color: COLORS.success, fontSize: 14, textAlign: "center" }}>
+            {result}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Chat Room
+// ============================================================
+function ChatRoom({ room, onBack, currentUser }) {
+  const [messages, setMessages] = useState([
+    { id: 1, sender: "이지현", text: "안녕하세요! 오늘 회의 자료 공유드립니다.", time: "09:30", mine: false },
+    { id: 2, sender: "나", text: "감사합니다! 확인해볼게요 👍", time: "09:32", mine: true },
+  ]);
+  const [input, setInput] = useState("");
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  const sendMessage = () => {
+    if (!input.trim()) return;
+    setMessages(prev => [...prev, { id: Date.now(), sender: "나", text: input, time: new Date().toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }), mine: true }]);
+    setInput("");
+  };
+
+  return (
+    <div style={styles.chatRoom}>
+      <div style={styles.header}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer", padding: 4 }}><Icons.Back /></button>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>{room.name}</span>
+        <div style={{ width: 30 }} />
+      </div>
+      <div style={styles.messagesArea}>
+        {messages.map(m => (
+          <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: m.mine ? "flex-end" : "flex-start", gap: 4 }}>
+            {!m.mine && <span style={{ fontSize: 12, color: COLORS.textMuted, marginLeft: 4 }}>{m.sender}</span>}
+            <div style={m.mine ? styles.bubbleMine : styles.bubbleOther}>{m.text}</div>
+            <span style={{ fontSize: 10, color: COLORS.textMuted, margin: "0 4px" }}>{m.time}</span>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+      <div style={styles.chatInput}>
+        <input
+          style={{ ...styles.input, marginBottom: 0, flex: 1, borderRadius: 24 }}
+          placeholder="메시지를 입력하세요..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && sendMessage()}
+        />
+        <button onClick={sendMessage} style={{ width: 44, height: 44, borderRadius: "50%", background: COLORS.primary, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.dark, flexShrink: 0 }}>
+          <Icons.Send />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Notice Board
+// ============================================================
+function NoticeBoard() {
+  const [selected, setSelected] = useState(null);
+
+  if (selected) {
+    const n = MOCK_NOTICES.find(x => x.id === selected);
+    return (
+      <div style={{ padding: 20 }}>
+        <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer", marginBottom: 16, fontFamily: FONT, fontSize: 14 }}>← 목록으로</button>
+        <div style={styles.card}>
+          {n.pinned && <div style={{ ...styles.badge(COLORS.danger), marginBottom: 12 }}>📌 고정</div>}
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{n.title}</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 16 }}>{n.author} · {n.date}</div>
+          <div style={{ fontSize: 14, lineHeight: 1.7, color: COLORS.text }}>{n.content}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 20 }}>
+      <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 16 }}>총 {MOCK_NOTICES.length}건의 공지사항</div>
+      {MOCK_NOTICES.map(n => (
+        <div key={n.id} style={{ ...styles.card, cursor: "pointer" }} onClick={() => setSelected(n.id)}
+          onMouseOver={e => e.currentTarget.style.borderColor = COLORS.primary + "55"}
+          onMouseOut={e => e.currentTarget.style.borderColor = COLORS.border}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            {n.pinned && <span style={styles.badge(COLORS.danger)}>📌 고정</span>}
+            <span style={{ fontSize: 15, fontWeight: 600 }}>{n.title}</span>
+          </div>
+          <div style={{ fontSize: 13, color: COLORS.textMuted }}>{n.author} · {n.date}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Schedule Board
+// ============================================================
+function ScheduleBoard() {
+  return (
+    <div style={{ padding: 20 }}>
+      <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 16 }}>이번 주 스케줄</div>
+      {MOCK_SCHEDULES.map(s => (
+        <div key={s.id} style={{ ...styles.card, display: "flex", gap: 16, alignItems: "center" }}>
+          <div style={{ width: 4, height: 44, borderRadius: 4, background: s.color, flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{s.title}</div>
+            <div style={{ fontSize: 13, color: COLORS.textMuted }}>{s.date} · {s.time}</div>
+          </div>
+          <div style={styles.badge(s.color)}>
+            {s.type === "meeting" ? "회의" : s.type === "review" ? "리뷰" : s.type === "deploy" ? "배포" : "행사"}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Holiday Request
+// ============================================================
+function HolidayBoard({ currentUser }) {
+  const [showForm, setShowForm] = useState(false);
+  const [holidays, setHolidays] = useState(MOCK_HOLIDAYS);
+  const [form, setForm] = useState({ startDate: "", endDate: "", reason: "" });
+
+  const handleSubmit = () => {
+    if (!form.startDate || !form.reason) return;
+    const newH = {
+      id: Date.now(),
+      user: currentUser?.name || "나",
+      dates: form.endDate ? `${form.startDate} ~ ${form.endDate}` : form.startDate,
+      reason: form.reason,
+      status: "pending",
+    };
+    setHolidays(prev => [newH, ...prev]);
+    setForm({ startDate: "", endDate: "", reason: "" });
+    setShowForm(false);
+  };
+
+  const statusMap = { pending: { label: "대기중", color: COLORS.warning }, approved: { label: "승인됨", color: COLORS.success }, rejected: { label: "반려", color: COLORS.danger } };
+
+  return (
+    <div style={{ padding: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: COLORS.textMuted }}>휴무 신청 현황</div>
+        <button onClick={() => setShowForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: COLORS.primary, color: COLORS.dark, border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+          <Icons.Plus /> 휴무 신청
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ ...styles.card, borderColor: COLORS.primary + "44", marginBottom: 16 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>휴무 신청서</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input type="date" style={{ ...styles.input, flex: 1, marginBottom: 0 }} value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} />
+            <span style={{ lineHeight: "44px", color: COLORS.textMuted }}>~</span>
+            <input type="date" style={{ ...styles.input, flex: 1, marginBottom: 0 }} value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} />
+          </div>
+          <input style={styles.input} placeholder="사유를 입력하세요" value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: 12, background: COLORS.border, color: COLORS.text, border: "none", borderRadius: 10, cursor: "pointer", fontFamily: FONT }}>취소</button>
+            <button onClick={handleSubmit} style={{ flex: 1, padding: 12, background: COLORS.primary, color: COLORS.dark, border: "none", borderRadius: 10, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>제출</button>
+          </div>
+        </div>
+      )}
+
+      {holidays.map(h => {
+        const st = statusMap[h.status];
+        return (
+          <div key={h.id} style={styles.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 15, fontWeight: 600 }}>{h.user}</span>
+              <span style={styles.badge(st.color)}>{st.label}</span>
+            </div>
+            <div style={{ fontSize: 14, color: COLORS.textMuted, marginBottom: 4 }}>📅 {h.dates}</div>
+            <div style={{ fontSize: 13, color: COLORS.textMuted }}>사유: {h.reason}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Job Poster Generator
+// ============================================================
+function JobPosterPreview({ job }) {
+  return (
+    <div style={styles.poster}>
+      <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: "rgba(255,255,255,0.15)" }} />
+      <div style={{ position: "absolute", bottom: -30, left: -30, width: 100, height: 100, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} />
+      <div style={{ position: "relative", zIndex: 1 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", opacity: 0.7, marginBottom: 8 }}>WE'RE HIRING</div>
+        <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }}>{job.title}</div>
+        <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.8, marginBottom: 20 }}>{job.dept} · {job.type}</div>
+        <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 20, opacity: 0.85 }}>{job.description}</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
+          {job.skills.map(s => (
+            <span key={s} style={{ padding: "5px 12px", background: "rgba(0,0,0,0.15)", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{s}</span>
+          ))}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.1)" }}>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.6 }}>연봉</div>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>{job.salary}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 12, opacity: 0.6 }}>마감일</div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{job.deadline}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Component: Admin Panel
+// ============================================================
+function AdminPanel({ onBack }) {
+  const [activeMenu, setActiveMenu] = useState("members");
+  const [jobs, setJobs] = useState(MOCK_JOBS);
+  const [showJobForm, setShowJobForm] = useState(false);
+  const [previewJob, setPreviewJob] = useState(null);
+  const [jobForm, setJobForm] = useState({ title: "", dept: "", type: "정규직", salary: "", deadline: "", skills: "", description: "" });
+  const [holidays, setHolidays] = useState(MOCK_HOLIDAYS);
+
+  const handleCreateJob = () => {
+    const newJob = {
+      id: Date.now(),
+      ...jobForm,
+      skills: jobForm.skills.split(",").map(s => s.trim()).filter(Boolean),
+    };
+    setJobs(prev => [newJob, ...prev]);
+    setJobForm({ title: "", dept: "", type: "정규직", salary: "", deadline: "", skills: "", description: "" });
+    setShowJobForm(false);
+  };
+
+  const handleApprove = (id) => setHolidays(prev => prev.map(h => h.id === id ? { ...h, status: "approved" } : h));
+  const handleReject = (id) => setHolidays(prev => prev.map(h => h.id === id ? { ...h, status: "rejected" } : h));
+
+  const menus = [
+    { id: "members", label: "직원 관리", icon: <Icons.People /> },
+    { id: "notices", label: "공지사항 관리", icon: <Icons.Notice /> },
+    { id: "holidays", label: "휴무 승인", icon: <Icons.Holiday /> },
+    { id: "jobs", label: "구인 공고", icon: <Icons.Briefcase /> },
+  ];
+
+  return (
+    <div style={{ display: "flex", height: "100%", flexDirection: "column" }}>
+      <div style={styles.header}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer", padding: 4 }}><Icons.Back /></button>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>관리자 패널</span>
+        <div style={{ width: 30 }} />
+      </div>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <div style={{ width: "100%", display: "flex", flexDirection: "column" }}>
+          {/* Mobile horizontal tabs */}
+          <div style={{ display: "flex", overflowX: "auto", borderBottom: `1px solid ${COLORS.border}`, padding: "0 8px", gap: 0 }}>
+            {menus.map(m => (
+              <button key={m.id} onClick={() => setActiveMenu(m.id)} style={{
+                padding: "12px 16px", border: "none", background: "none", fontFamily: FONT, fontSize: 12, fontWeight: activeMenu === m.id ? 700 : 400,
+                color: activeMenu === m.id ? COLORS.primary : COLORS.textMuted, cursor: "pointer", whiteSpace: "nowrap",
+                borderBottom: activeMenu === m.id ? `2px solid ${COLORS.primary}` : "2px solid transparent",
+              }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+            {/* Members */}
+            {activeMenu === "members" && (
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>등록된 직원 {MOCK_USERS.length}명</div>
+                {MOCK_USERS.map(u => (
+                  <div key={u.id} style={{ ...styles.card, display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={styles.avatar(40)}>{u.avatar}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{u.name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textMuted }}>{u.dept} · {u.email}</div>
+                    </div>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: u.status === "online" ? COLORS.success : u.status === "away" ? COLORS.warning : COLORS.textMuted }} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Notices */}
+            {activeMenu === "notices" && <NoticeBoard />}
+
+            {/* Holidays approval */}
+            {activeMenu === "holidays" && (
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>휴무 승인 관리</div>
+                {holidays.map(h => {
+                  const st = { pending: { label: "대기중", color: COLORS.warning }, approved: { label: "승인됨", color: COLORS.success }, rejected: { label: "반려", color: COLORS.danger } }[h.status];
+                  return (
+                    <div key={h.id} style={styles.card}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <span style={{ fontWeight: 600 }}>{h.user}</span>
+                        <span style={styles.badge(st.color)}>{st.label}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 4 }}>📅 {h.dates}</div>
+                      <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 12 }}>사유: {h.reason}</div>
+                      {h.status === "pending" && (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => handleApprove(h.id)} style={{ flex: 1, padding: 10, background: COLORS.success, color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>승인</button>
+                          <button onClick={() => handleReject(h.id)} style={{ flex: 1, padding: 10, background: COLORS.danger, color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>반려</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Jobs */}
+            {activeMenu === "jobs" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted }}>구인 공고 {jobs.length}건</div>
+                  <button onClick={() => setShowJobForm(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: COLORS.primary, color: COLORS.dark, border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>
+                    <Icons.Plus /> 새 공고
+                  </button>
+                </div>
+
+                {showJobForm && (
+                  <div style={{ ...styles.card, borderColor: COLORS.primary + "44" }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>구인 공고 작성</div>
+                    <input style={styles.input} placeholder="직무명 (예: 프론트엔드 개발자)" value={jobForm.title} onChange={e => setJobForm({ ...jobForm, title: e.target.value })} />
+                    <input style={styles.input} placeholder="부서" value={jobForm.dept} onChange={e => setJobForm({ ...jobForm, dept: e.target.value })} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <select style={{ ...styles.input, flex: 1 }} value={jobForm.type} onChange={e => setJobForm({ ...jobForm, type: e.target.value })}>
+                        <option>정규직</option><option>계약직</option><option>인턴</option><option>파트타임</option>
+                      </select>
+                      <input style={{ ...styles.input, flex: 1 }} placeholder="연봉 범위" value={jobForm.salary} onChange={e => setJobForm({ ...jobForm, salary: e.target.value })} />
+                    </div>
+                    <input style={styles.input} placeholder="마감일 (예: 2026-04-30)" value={jobForm.deadline} onChange={e => setJobForm({ ...jobForm, deadline: e.target.value })} />
+                    <input style={styles.input} placeholder="필요 스킬 (쉼표로 구분)" value={jobForm.skills} onChange={e => setJobForm({ ...jobForm, skills: e.target.value })} />
+                    <textarea style={{ ...styles.input, minHeight: 80, resize: "vertical" }} placeholder="공고 설명" value={jobForm.description} onChange={e => setJobForm({ ...jobForm, description: e.target.value })} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setShowJobForm(false)} style={{ flex: 1, padding: 12, background: COLORS.border, color: COLORS.text, border: "none", borderRadius: 10, cursor: "pointer", fontFamily: FONT }}>취소</button>
+                      <button onClick={handleCreateJob} style={{ flex: 1, padding: 12, background: COLORS.primary, color: COLORS.dark, border: "none", borderRadius: 10, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>등록</button>
+                    </div>
+                  </div>
+                )}
+
+                {jobs.map(j => (
+                  <div key={j.id} style={styles.card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{j.title}</div>
+                        <div style={{ fontSize: 13, color: COLORS.textMuted }}>{j.dept} · {j.type}</div>
+                      </div>
+                      <span style={styles.badge(COLORS.success)}>모집중</span>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12 }}>
+                      {j.skills.map(s => <span key={s} style={styles.tag}>{s}</span>)}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 13, color: COLORS.textMuted }}>마감: {j.deadline}</span>
+                      <button onClick={() => setPreviewJob(j)} style={{ padding: "6px 14px", background: `${COLORS.accent}22`, color: COLORS.accentLight, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Icons.Eye /> 포스터 미리보기
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {previewJob && (
+                  <div style={styles.modal} onClick={() => setPreviewJob(null)}>
+                    <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 400 }}>
+                      <JobPosterPreview job={previewJob} />
+                      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                        <button onClick={() => setPreviewJob(null)} style={{ flex: 1, padding: 14, background: COLORS.cardBg, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT }}>닫기</button>
+                        <button style={{ flex: 1, padding: 14, background: COLORS.primary, color: COLORS.dark, border: "none", borderRadius: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                          <Icons.Download /> 다운로드
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Main App
+// ============================================================
+export default function TreeMandersApp() {
+  const [screen, setScreen] = useState("login"); // login, register, findAccount, main, admin
+  const [currentUser, setCurrentUser] = useState(null);
+  const [activeTab, setActiveTab] = useState("chat");
+  const [activeChatRoom, setActiveChatRoom] = useState(null);
+
+  const chatRooms = [
+    { id: "notice", name: "📢 공지사항", lastMsg: "4월 전체 회의 안내", time: "09:30", unread: 2, type: "notice" },
+    { id: "schedule", name: "📅 스케줄표", lastMsg: "스프린트 회의 일정이 추가되었습니다", time: "어제", unread: 0, type: "schedule" },
+    { id: "holiday", name: "🌴 휴무 계획", lastMsg: "김민수님이 휴무를 신청했습니다", time: "어제", unread: 1, type: "holiday" },
+    { id: "general", name: "💬 자유 채팅방", lastMsg: "점심 뭐 먹을까요?", time: "10:15", unread: 5, type: "chat" },
+    { id: "dev", name: "🧑‍💻 개발팀", lastMsg: "PR 리뷰 부탁드립니다", time: "09:45", unread: 3, type: "chat" },
+    { id: "design", name: "🎨 디자인팀", lastMsg: "목업 피드백 공유드립니다", time: "08:30", unread: 0, type: "chat" },
+  ];
+
+  // Auth Screens
+  if (screen === "login") return <LoginScreen onLogin={u => { setCurrentUser(u); setScreen("main"); }} onGoRegister={() => setScreen("register")} onGoFindAccount={() => setScreen("findAccount")} />;
+  if (screen === "register") return <RegisterScreen onBack={() => setScreen("login")} onRegister={() => setScreen("login")} />;
+  if (screen === "findAccount") return <FindAccountScreen onBack={() => setScreen("login")} />;
+  if (screen === "admin") return <AdminPanel onBack={() => setScreen("main")} />;
+
+  // Chat room views
+  if (activeChatRoom) {
+    const room = chatRooms.find(r => r.id === activeChatRoom);
+    if (room.type === "notice") return (
+      <div style={{ ...styles.app, height: "100vh" }}>
+        <div style={styles.header}>
+          <button onClick={() => setActiveChatRoom(null)} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer" }}><Icons.Back /></button>
+          <span style={{ fontWeight: 700 }}>{room.name}</span>
+          <div style={{ width: 30 }} />
+        </div>
+        <div style={styles.content}><NoticeBoard /></div>
+      </div>
+    );
+    if (room.type === "schedule") return (
+      <div style={{ ...styles.app, height: "100vh" }}>
+        <div style={styles.header}>
+          <button onClick={() => setActiveChatRoom(null)} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer" }}><Icons.Back /></button>
+          <span style={{ fontWeight: 700 }}>{room.name}</span>
+          <div style={{ width: 30 }} />
+        </div>
+        <div style={styles.content}><ScheduleBoard /></div>
+      </div>
+    );
+    if (room.type === "holiday") return (
+      <div style={{ ...styles.app, height: "100vh" }}>
+        <div style={styles.header}>
+          <button onClick={() => setActiveChatRoom(null)} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer" }}><Icons.Back /></button>
+          <span style={{ fontWeight: 700 }}>{room.name}</span>
+          <div style={{ width: 30 }} />
+        </div>
+        <div style={styles.content}><HolidayBoard currentUser={currentUser} /></div>
+      </div>
+    );
+    return <ChatRoom room={room} onBack={() => setActiveChatRoom(null)} currentUser={currentUser} />;
+  }
+
+  // Main App
+  return (
+    <div style={styles.app}>
+      <style>{`
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${COLORS.border}; border-radius: 4px; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+        select { appearance: none; }
+        input:focus, textarea:focus, select:focus { border-color: ${COLORS.primary} !important; outline: none; }
+      `}</style>
+
+      {/* Header */}
+      <div style={styles.header}>
+        <span style={{ ...styles.headerTitle, color: COLORS.primary }}>💬 트리맨더스</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setScreen("admin")} style={{ background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer", padding: 6 }} title="관리자"><Icons.Admin /></button>
+          <button onClick={() => { setScreen("login"); setCurrentUser(null); }} style={{ background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer", padding: 6 }} title="로그아웃"><Icons.Logout /></button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={styles.content}>
+        {activeTab === "chat" && (
+          <div>
+            {/* Search */}
+            <div style={{ padding: "12px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: COLORS.cardBg, borderRadius: 12, border: `1px solid ${COLORS.border}` }}>
+                <Icons.Search />
+                <input style={{ background: "none", border: "none", color: COLORS.text, fontSize: 14, outline: "none", width: "100%", fontFamily: FONT }} placeholder="채팅방 검색..." />
+              </div>
+            </div>
+            {/* Chat list */}
+            {chatRooms.map(room => (
+              <div key={room.id} style={styles.chatItem} onClick={() => setActiveChatRoom(room.id)}
+                onMouseOver={e => e.currentTarget.style.background = COLORS.cardBgHover}
+                onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+                <div style={styles.avatar()}>{room.name.split(" ")[0]}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600, fontSize: 15 }}>{room.name}</span>
+                    <span style={{ fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>{room.time}</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{room.lastMsg}</div>
+                </div>
+                {room.unread > 0 && (
+                  <div style={{ minWidth: 22, height: 22, borderRadius: 11, background: COLORS.danger, color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", flexShrink: 0 }}>
+                    {room.unread}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "people" && (
+          <div style={{ padding: 20 }}>
+            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 16 }}>동료 {MOCK_USERS.length}명</div>
+            {MOCK_USERS.map(u => (
+              <div key={u.id} style={{ ...styles.card, display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ position: "relative" }}>
+                  <div style={styles.avatar(48)}>{u.avatar}</div>
+                  <div style={{ position: "absolute", bottom: 2, right: 2, width: 10, height: 10, borderRadius: "50%", background: u.status === "online" ? COLORS.success : u.status === "away" ? COLORS.warning : COLORS.textMuted, border: `2px solid ${COLORS.cardBg}` }} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>{u.name}</div>
+                  <div style={{ fontSize: 12, color: COLORS.textMuted }}>{u.dept}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "more" && (
+          <div style={{ padding: 20 }}>
+            <div style={{ ...styles.card, display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+              <div style={styles.avatar(56)}>🧑‍💻</div>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{currentUser?.name || "김민수"}</div>
+                <div style={{ fontSize: 13, color: COLORS.textMuted }}>{currentUser?.email || "minsu@company.com"}</div>
+              </div>
+            </div>
+            {[
+              { label: "관리자 페이지", icon: <Icons.Admin />, action: () => setScreen("admin") },
+              { label: "로그아웃", icon: <Icons.Logout />, action: () => { setScreen("login"); setCurrentUser(null); }, danger: true },
+            ].map((item, i) => (
+              <button key={i} onClick={item.action} style={{ ...styles.card, display: "flex", alignItems: "center", gap: 14, cursor: "pointer", width: "100%", border: `1px solid ${COLORS.border}`, textAlign: "left", fontFamily: FONT }}>
+                <span style={{ color: item.danger ? COLORS.danger : COLORS.textMuted }}>{item.icon}</span>
+                <span style={{ fontSize: 15, color: item.danger ? COLORS.danger : COLORS.text }}>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Tab Bar */}
+      <div style={styles.tabBar}>
+        {[
+          { id: "chat", label: "채팅", icon: <Icons.Chat /> },
+          { id: "people", label: "동료", icon: <Icons.People /> },
+          { id: "more", label: "더보기", icon: <Icons.Admin /> },
+        ].map(t => (
+          <button key={t.id} style={styles.tab(activeTab === t.id)} onClick={() => setActiveTab(t.id)}>
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}

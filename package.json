@@ -1,0 +1,11 @@
+{
+  "name": "treemanders-hosting",
+  "private": true,
+  "scripts": {
+    "deploy": "firebase deploy --only hosting",
+    "watch:hosting": "node watch-hosting-deploy.mjs"
+  },
+  "devDependencies": {
+    "chokidar": "^4.0.3"
+  }
+}

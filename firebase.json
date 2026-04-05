@@ -1,0 +1,31 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      ".firebaserc",
+      "**/.*",
+      "**/node_modules/**",
+      "회사전용.txt",
+      "firebase.js",
+      "package.json",
+      "package-lock.json",
+      "watch-hosting-deploy.mjs"
+    ],
+    "rewrites": [
+      {
+        "source": "/",
+        "destination": "/트리맨더스.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.html",
+        "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }]
+      }
+    ]
+  }
+}
