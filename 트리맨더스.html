@@ -531,6 +531,54 @@ function getAdminEmployeeSelectOptions() {
   return roster.map((r, i) => ({ key: r.uid || `r-${i}`, name: r.name || r.email, email: r.email || "", fromRoster: true }));
 }
 
+/**
+ * 구역 배정·스케줄 직원명: Firestore 승인 직원(동료) + 로컬 로스터 + 부관리자 이메일.
+ * 로컬 로스터만 쓰면 다른 PC에서만 가입한 직원이 빠집니다.
+ */
+function getRegionAssignEmployeeSelectOptions(employeeApprovalDocs) {
+  const byEmail = new Map();
+
+  (employeeApprovalDocs || []).forEach((row) => {
+    if (String(row.status || "pending") !== "approved") return;
+    const email = String(row.email || "").toLowerCase().trim();
+    if (!email) return;
+    const name = String(row.displayName || "").trim() || email.split("@")[0];
+    const key = String(row.id || email);
+    byEmail.set(email, { key, name, email: row.email || email });
+  });
+
+  getEmployeeRoster().forEach((r, i) => {
+    const email = String(r.email || "").toLowerCase().trim();
+    if (!email) return;
+    const name = String(r.name || "").trim() || email.split("@")[0];
+    const prev = byEmail.get(email);
+    if (prev) {
+      byEmail.set(email, {
+        ...prev,
+        name: name || prev.name,
+        key: r.uid ? String(r.uid) : prev.key,
+      });
+    } else {
+      byEmail.set(email, { key: r.uid || `roster-${i}-${email}`, name, email: r.email || email });
+    }
+  });
+
+  allAdminEmails().forEach((adminEm) => {
+    const em = String(adminEm || "").toLowerCase().trim();
+    if (!em) return;
+    if (byEmail.has(em)) return;
+    byEmail.set(em, {
+      key: `admin-${em}`,
+      name: em.split("@")[0],
+      email: adminEm,
+    });
+  });
+
+  return [...byEmail.values()]
+    .filter((o) => String(o.name || "").trim())
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+}
+
 function allAdminEmails() {
   return [...new Set([ADMIN_CANONICAL_EMAIL.toLowerCase(), ...getExtraAdminEmails()])];
 }
@@ -2709,8 +2757,8 @@ function isPersonOffOnIso(personName, iso, leaveRequests) {
   return false;
 }
 
-function scheduleBoardRosterNames() {
-  const opts = getAdminEmployeeSelectOptions();
+function scheduleBoardRosterNames(employeeApprovalDocs) {
+  const opts = getRegionAssignEmployeeSelectOptions(employeeApprovalDocs);
   return [...new Set(opts.map((o) => String(o.name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
 }
 
@@ -2774,39 +2822,21 @@ function ensureExcelJS() {
   return _excelJsLoadPromise;
 }
 
-/** 주간 엑셀용: 요일 칸에 세로로 쌓을 문자열 목록 (직원 순서와 동일, 미배정·비휴무는 생략) */
-function buildWeekScheduleLinesForIso(rosterNames, iso, leaveRequests, regionAssignments) {
-  const lines = [];
-  for (const name of rosterNames) {
-    const off = isPersonOffOnIso(name, iso, leaveRequests);
-    const alist = assignsForPersonOnIso(regionAssignments, iso, name);
-    const g = groupRegionAssignmentsByPerson(alist);
-    const codes = g[0]?.codes || "";
-    if (off) lines.push("휴무");
-    else if (codes) lines.push(codes);
+/** 주간 엑셀 한 칸: 직원·해당일 기준 구역 또는 휴무 */
+function excelCellValueForPersonDay(personName, iso, leaveRequests, regionAssignments) {
+  const off = isPersonOffOnIso(personName, iso, leaveRequests);
+  const alist = assignsForPersonOnIso(regionAssignments, iso, personName);
+  const g = groupRegionAssignmentsByPerson(alist);
+  const codes = g[0]?.codes || "";
+  if (off) {
+    return {
+      richText: [
+        { font: { name: "맑은 고딕", size: 11, bold: true, color: { argb: "FFFF0000" } }, text: "휴무" },
+      ],
+    };
   }
-  return lines;
-}
-
-function excelRichTextFromScheduleLines(lines) {
-  if (!lines || !lines.length) return "";
-  const richText = [];
-  lines.forEach((line, i) => {
-    const isOff = line === "휴무";
-    richText.push({
-      font: {
-        name: "맑은 고딕",
-        size: 11,
-        bold: true,
-        color: { argb: isOff ? "FFFF0000" : "FF000000" },
-      },
-      text: line,
-    });
-    if (i < lines.length - 1) {
-      richText.push({ font: { name: "맑은 고딕", size: 11 }, text: "\n" });
-    }
-  });
-  return { richText };
+  if (codes) return codes;
+  return "";
 }
 
 async function exportScheduleWeekExcel({ weekIsos, rosterNames, leaveRequests, regionAssignments }) {
@@ -2814,13 +2844,20 @@ async function exportScheduleWeekExcel({ weekIsos, rosterNames, leaveRequests, r
   if (!isAdminEmail(em)) throw new Error("관리자만 엑셀을 받을 수 있습니다.");
   const ExcelJS = await ensureExcelJS();
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("주간스케줄", { properties: { defaultRowHeight: 18 } });
+  const ws = wb.addWorksheet("주간스케줄", { properties: { defaultRowHeight: 20 } });
   const wd = ["일", "월", "화", "수", "목", "금", "토"];
   const thick = { style: "medium", color: { argb: "FF000000" } };
   const borderAll = { top: thick, left: thick, bottom: thick, right: thick };
 
+  const nameHeader = ws.getCell(1, 1);
+  nameHeader.value = "이름";
+  nameHeader.alignment = { horizontal: "center", vertical: "middle" };
+  nameHeader.border = borderAll;
+  nameHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2F2F2" } };
+  nameHeader.font = { name: "맑은 고딕", bold: true, size: 12, underline: true, color: { argb: "FF000000" } };
+
   for (let colIdx = 0; colIdx < 7; colIdx++) {
-    const c = ws.getCell(1, colIdx + 1);
+    const c = ws.getCell(1, colIdx + 2);
     c.value = wd[colIdx];
     c.alignment = { horizontal: "center", vertical: "middle" };
     c.border = borderAll;
@@ -2836,19 +2873,46 @@ async function exportScheduleWeekExcel({ weekIsos, rosterNames, leaveRequests, r
     }
   }
 
-  const columnsLines = weekIsos.map((iso) => buildWeekScheduleLinesForIso(rosterNames, iso, leaveRequests, regionAssignments));
-  const maxLines = Math.max(1, ...columnsLines.map((l) => l.length), 8);
-
-  columnsLines.forEach((lines, colIdx) => {
-    const c = ws.getCell(2, colIdx + 1);
-    c.value = lines.length ? excelRichTextFromScheduleLines(lines) : "";
-    c.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  const names = Array.isArray(rosterNames) ? rosterNames.filter((n) => String(n || "").trim()) : [];
+  if (names.length === 0) {
+    const c = ws.getCell(2, 1);
+    c.value = "(등록된 직원 없음)";
+    c.alignment = { horizontal: "left", vertical: "middle" };
     c.border = borderAll;
-  });
+    c.font = { name: "맑은 고딕", size: 11, italic: true, color: { argb: "FF666666" } };
+    for (let col = 2; col <= 8; col++) {
+      const empty = ws.getCell(2, col);
+      empty.value = "";
+      empty.border = borderAll;
+    }
+  } else {
+    names.forEach((name, rowIdx) => {
+      const r = rowIdx + 2;
+      const nameCell = ws.getCell(r, 1);
+      nameCell.value = String(name).trim();
+      nameCell.alignment = { horizontal: "left", vertical: "middle", wrapText: false };
+      nameCell.border = borderAll;
+      nameCell.font = { name: "맑은 고딕", size: 11, bold: true, color: { argb: "FF000000" } };
+      weekIsos.forEach((iso, dayIdx) => {
+        const cell = ws.getCell(r, dayIdx + 2);
+        cell.value = excelCellValueForPersonDay(name, iso, leaveRequests, regionAssignments);
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        cell.border = borderAll;
+        if (typeof cell.value === "string" && cell.value) {
+          cell.font = { name: "맑은 고딕", size: 11, color: { argb: "FF000000" } };
+        }
+      });
+    });
+  }
 
   ws.getRow(1).height = 28;
-  ws.getRow(2).height = Math.min(480, Math.max(100, 20 * maxLines));
-  for (let i = 0; i < 7; i++) ws.getColumn(i + 1).width = 18;
+  const lastRow = Math.max(2, names.length + 1);
+  for (let rr = 2; rr <= lastRow; rr++) ws.getRow(rr).height = 22;
+
+  ws.getColumn(1).width = 16;
+  for (let i = 0; i < 7; i++) ws.getColumn(i + 2).width = 18;
+
+  ws.views = [{ state: "frozen", xSplit: 1, ySplit: 1, topLeftCell: "B2", activeCell: "B2" }];
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -2862,7 +2926,7 @@ async function exportScheduleWeekExcel({ weekIsos, rosterNames, leaveRequests, r
   URL.revokeObjectURL(url);
 }
 
-function ScheduleBoard({ leaveRequests = [], fixedOffByEmail = {}, allowExcelExport = false }) {
+function ScheduleBoard({ leaveRequests = [], fixedOffByEmail = {}, allowExcelExport = false, employeeApprovalsList = [] }) {
   const [regionAssignTick, setRegionAssignTick] = useState(0);
   const [viewYm, setViewYm] = useState(() => {
     const t = new Date();
@@ -2895,7 +2959,7 @@ function ScheduleBoard({ leaveRequests = [], fixedOffByEmail = {}, allowExcelExp
   }, [viewYm]);
 
   const monthAssigns = useMemo(() => regionAssignments.filter((a) => a.ym === viewYm), [regionAssignments, viewYm]);
-  const rosterNames = useMemo(() => scheduleBoardRosterNames(), [regionAssignTick]);
+  const rosterNames = useMemo(() => scheduleBoardRosterNames(employeeApprovalsList), [regionAssignTick, employeeApprovalsList]);
 
   const [y, m] = viewYm.split("-").map(Number);
   const dim = new Date(y, m, 0).getDate();
@@ -3882,7 +3946,7 @@ function parseZoneCodesFromBulk(text) {
   return [...new Set(String(text).split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean))];
 }
 
-function AdminRegionDispatch() {
+function AdminRegionDispatch({ employeeApprovalsList = [] }) {
   const [regions, setRegions] = useState(() => getSavedRegions());
   const [zoneBulkText, setZoneBulkText] = useState(() => getSavedRegions().join(", "));
   const [bulkMsg, setBulkMsg] = useState("");
@@ -3947,7 +4011,10 @@ function AdminRegionDispatch() {
     setPickDay(day);
   };
 
-  const employeeOptionsAll = getAdminEmployeeSelectOptions();
+  const employeeOptionsAll = useMemo(
+    () => getRegionAssignEmployeeSelectOptions(employeeApprovalsList),
+    [employeeApprovalsList]
+  );
   const selSize = (n) => Math.min(Math.max(n, 2), 8);
 
   const nameForKey = (k) => {
@@ -4053,7 +4120,7 @@ function AdminRegionDispatch() {
       <div style={{ ...styles.card, marginBottom: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>기본 구역 코드</div>
         <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
-          코드를 <strong>쉼표</strong> 또는 <strong>줄바꿈</strong>으로 입력한 뒤 저장하면 아래에 <strong>월 달력</strong>이 열립니다. 날짜를 누르면 <strong>가입 직원</strong>과 <strong>구역</strong>을 고르고 저장할 수 있습니다. (예: <code style={{ color: COLORS.primary }}>312A, 312B, 312C, 312D</code>)
+          코드를 <strong>쉼표</strong> 또는 <strong>줄바꿈</strong>으로 입력한 뒤 저장하면 아래에 <strong>월 달력</strong>이 열립니다. 날짜를 누르면 <strong>승인된 직원·동료</strong>(Firestore)과 <strong>로컬 로스터</strong>를 합친 목록에서 직원과 <strong>구역</strong>을 고르고 저장할 수 있습니다. (예: <code style={{ color: COLORS.primary }}>312A, 312B, 312C, 312D</code>)
         </div>
         <textarea
           style={{ ...styles.input, minHeight: 88, resize: "vertical", fontFamily: "ui-monospace, monospace", fontSize: 13 }}
@@ -4180,7 +4247,7 @@ function AdminRegionDispatch() {
           <div style={{ ...styles.modalContent, maxWidth: 400, maxHeight: "min(90vh, 560px)", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.35 }}>{modalDateTitle} · 구역 배정</div>
             <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 14, lineHeight: 1.45 }}>
-              로그인한 계정만 직원 목록에 표시됩니다.
+              직원 목록은 <strong style={{ color: COLORS.text }}>관리자 승인(Firestore)</strong> 직원·동료와 이 기기 <strong style={{ color: COLORS.text }}>로컬 로스터</strong>를 합친 목록입니다.
               <br />
               <strong style={{ color: COLORS.text }}>여러 명·여러 구역:</strong> Windows는 <kbd style={{ opacity: 0.85 }}>Ctrl</kbd>, Mac은 <kbd style={{ opacity: 0.85 }}>⌘</kbd>를 누른 채 항목을 클릭하세요. 직원 1명 + 구역 여러 개 한 번에 저장 가능합니다. 직원 여러 명이면 구역도 같은 개수로 선택하면 순서대로 짝지어집니다.
               <br />
@@ -4697,7 +4764,7 @@ function AdminEmployeeFixedOffEditor({ fixedOffByEmail }) {
 // ============================================================
 // Component: Admin Panel
 // ============================================================
-function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail }) {
+function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail, employeeApprovalsList = [] }) {
   const showRoleMenu = isSuperAdminEmail(actorEmail);
   const [grantRev, setGrantRev] = useState(0);
   useEffect(() => {
@@ -4837,7 +4904,7 @@ function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail }) {
             {/* Notices */}
             {activeMenu === "notices" && <NoticeBoard adminMode authorDefault={actorEmail || "관리자"} />}
 
-            {activeMenu === "regions" && <AdminRegionDispatch />}
+            {activeMenu === "regions" && <AdminRegionDispatch employeeApprovalsList={employeeApprovalsList} />}
 
             {/* Holidays approval + 스케줄러 */}
             {activeMenu === "holidays" && (
@@ -5438,7 +5505,7 @@ function TreeMandersApp() {
       />
     );
   }
-  if (screen === "admin") return <AdminPanel onBack={() => setScreen("main")} leaveRequests={leaveRequests} actorEmail={currentUser?.email} fixedOffByEmail={fixedOffByEmail} />;
+  if (screen === "admin") return <AdminPanel onBack={() => setScreen("main")} leaveRequests={leaveRequests} actorEmail={currentUser?.email} fixedOffByEmail={fixedOffByEmail} employeeApprovalsList={employeeApprovalsList} />;
 
   // Chat room views
   if (activeChatRoom) {
@@ -5467,7 +5534,7 @@ function TreeMandersApp() {
           <span style={{ fontWeight: 700 }}>{room.name}</span>
           <div style={{ width: 30 }} />
         </div>
-        <div style={styles.content}><ScheduleBoard leaveRequests={leaveRequests} fixedOffByEmail={fixedOffByEmail} allowExcelExport={isAdmin} /></div>
+        <div style={styles.content}><ScheduleBoard leaveRequests={leaveRequests} fixedOffByEmail={fixedOffByEmail} allowExcelExport={isAdmin} employeeApprovalsList={employeeApprovalsList} /></div>
       </div>
     );
     if (room.type === "holiday") return (
