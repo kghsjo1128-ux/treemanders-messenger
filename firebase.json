@@ -13,7 +13,10 @@
       "firebase.js",
       "package.json",
       "package-lock.json",
-      "watch-hosting-deploy.mjs"
+      "watch-hosting-deploy.mjs",
+      "firebase-debug.log",
+      "deploy*.txt",
+      "deploy-log*.txt"
     ],
     "rewrites": [
       {
