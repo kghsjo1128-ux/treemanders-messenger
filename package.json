@@ -1,11 +1,20 @@
 {
   "name": "treemanders-hosting",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "deploy": "firebase deploy --only hosting",
+    "deploy:all": "firebase deploy",
     "watch:hosting": "node watch-hosting-deploy.mjs"
   },
+  "dependencies": {
+    "firebase": "^11.0.0"
+  },
   "devDependencies": {
-    "chokidar": "^4.0.3"
+    "chokidar": "^4.0.3",
+    "firebase-tools": "^13.0.0"
   }
 }

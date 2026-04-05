@@ -14,6 +14,9 @@
 - `firestore.rules` — Firestore 보안 규칙
 - `firebase.json` / `.firebaserc` — Hosting·Firestore 배포 설정
 - `package.json` — 배포·감시 스크립트 (`npm run deploy`, `npm run watch:hosting`)
+- `firebase.js` — Node에서 Firebase 앱 초기화용(선택). 웹 실행은 HTML의 CDN 설정이 기준입니다.
+
+**요구 사항:** Node.js 18 이상. 첫 클론 후 `npm install`로 CLI·SDK를 설치합니다.
 
 ## 로컬에서 보기
 
@@ -28,7 +31,8 @@ npm install
 npm run deploy
 ```
 
-(Firebase CLI 로그인 및 프로젝트 권한이 필요합니다.)
+- `firebase login`으로 한 번 로그인한 뒤, 같은 머신에서 배포하면 됩니다.
+- `npm run watch:hosting`은 `트리맨더스.html` 저장 시 `npx firebase deploy`로 Hosting만 배포합니다(전역 `firebase` 설치 불필요).
 
 ## 라이선스 / 비고
 

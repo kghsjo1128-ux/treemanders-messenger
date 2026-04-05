@@ -17,8 +17,8 @@ function runDeploy() {
     return;
   }
   deploying = true;
-  console.log("\n[" + new Date().toLocaleString("ko-KR") + "] firebase deploy --only hosting …");
-  const p = spawn("firebase", ["deploy", "--only", "hosting"], {
+  console.log("\n[" + new Date().toLocaleString("ko-KR") + "] npx firebase deploy --only hosting …");
+  const p = spawn("npx", ["--yes", "firebase", "deploy", "--only", "hosting"], {
     stdio: "inherit",
     shell: true,
     cwd: __dirname,
