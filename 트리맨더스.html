@@ -7,6 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>트리맨더스</title>
+  <!-- treemanders-build: 2026-04-05-roster-memo -->
   <style>
     html {
       -webkit-text-size-adjust: 100%;
@@ -539,8 +540,9 @@ function getRegionAssignEmployeeSelectOptions(employeeApprovalDocs) {
   const byEmail = new Map();
 
   (employeeApprovalDocs || []).forEach((row) => {
-    if (String(row.status || "pending") !== "approved") return;
-    const email = String(row.email || "").toLowerCase().trim();
+    const st = String(row.status || "pending").toLowerCase().trim();
+    if (st !== "approved") return;
+    const email = String(row.email || row.userEmail || "").toLowerCase().trim();
     if (!email) return;
     const name = String(row.displayName || "").trim() || email.split("@")[0];
     const key = String(row.id || email);
@@ -2939,6 +2941,8 @@ function ScheduleBoard({ leaveRequests = [], fixedOffByEmail = {}, allowExcelExp
     return getSavedRegions();
   }, [regionAssignTick]);
 
+  const [employeeRosterTick, setEmployeeRosterTick] = useState(0);
+
   useEffect(() => {
     const bump = () => setRegionAssignTick((t) => t + 1);
     const onStorage = (e) => {
@@ -2955,11 +2959,24 @@ function ScheduleBoard({ leaveRequests = [], fixedOffByEmail = {}, allowExcelExp
   }, []);
 
   useEffect(() => {
+    const bump = () => setEmployeeRosterTick((t) => t + 1);
+    window.addEventListener("treemanders-employee-roster-updated", bump);
+    const onStorage = (e) => {
+      if (e.key === LS_EMPLOYEE_ROSTER) bump();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("treemanders-employee-roster-updated", bump);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
     setSelectedDayForWeek(null);
   }, [viewYm]);
 
   const monthAssigns = useMemo(() => regionAssignments.filter((a) => a.ym === viewYm), [regionAssignments, viewYm]);
-  const rosterNames = useMemo(() => scheduleBoardRosterNames(employeeApprovalsList), [regionAssignTick, employeeApprovalsList]);
+  const rosterNames = useMemo(() => scheduleBoardRosterNames(employeeApprovalsList), [regionAssignTick, employeeApprovalsList, employeeRosterTick]);
 
   const [y, m] = viewYm.split("-").map(Number);
   const dim = new Date(y, m, 0).getDate();
@@ -3962,6 +3979,20 @@ function AdminRegionDispatch({ employeeApprovalsList = [] }) {
 
   useEffect(() => { setPickDay(null); }, [ym]);
 
+  const [employeeRosterTick, setEmployeeRosterTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setEmployeeRosterTick((t) => t + 1);
+    window.addEventListener("treemanders-employee-roster-updated", bump);
+    const onStorage = (e) => {
+      if (e.key === LS_EMPLOYEE_ROSTER) bump();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("treemanders-employee-roster-updated", bump);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
   const [y, m] = ym.split("-").map(Number);
   const dim = new Date(y, m, 0).getDate();
   const wd = ["일", "월", "화", "수", "목", "금", "토"];
@@ -4013,7 +4044,7 @@ function AdminRegionDispatch({ employeeApprovalsList = [] }) {
 
   const employeeOptionsAll = useMemo(
     () => getRegionAssignEmployeeSelectOptions(employeeApprovalsList),
-    [employeeApprovalsList]
+    [employeeApprovalsList, employeeRosterTick]
   );
   const selSize = (n) => Math.min(Math.max(n, 2), 8);
 
@@ -4272,7 +4303,10 @@ function AdminRegionDispatch({ employeeApprovalsList = [] }) {
               </div>
             )}
 
-            <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, marginBottom: 6 }}>직원 선택 (스크롤 · 다중 선택)</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, marginBottom: 6 }}>
+              직원 선택 (스크롤 · 다중 선택)
+              <span style={{ fontWeight: 500, color: COLORS.textMuted, marginLeft: 8 }}>· 후보 {employeeOptionsAll.length}명</span>
+            </div>
             {employeeOptionsAvailable.length === 0 ? (
               <div style={{ ...styles.input, marginBottom: 12, padding: 12, fontSize: 13, color: COLORS.textMuted }}>이 날짜에 추가로 배정할 수 있는 직원이 없습니다. 위에서 배정을 삭제하면 다시 나타납니다.</div>
             ) : (
