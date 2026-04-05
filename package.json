@@ -6,8 +6,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "deploy": "firebase deploy --only hosting",
-    "deploy:all": "firebase deploy",
+    "deploy": "node --no-deprecation ./node_modules/firebase-tools/lib/bin/firebase.js deploy --only hosting",
+    "deploy:all": "node --no-deprecation ./node_modules/firebase-tools/lib/bin/firebase.js deploy",
     "watch:hosting": "node watch-hosting-deploy.mjs"
   },
   "dependencies": {
