@@ -1,23 +1,64 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function adminEmails() {
+      return [
+        'trmendous@treemanders.internal'
+      ];
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email in adminEmails();
+    }
+
+    function isOwnerEmail(email) {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email == email;
+    }
+
     match /leaveRequests/{docId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null
-        && request.resource.data.userEmail == request.auth.token.email;
-      allow update, delete: if request.auth != null;
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.userEmail is string
+        && isOwnerEmail(request.resource.data.userEmail);
+      allow update: if isAdmin()
+        || (resource.data.userEmail is string
+            && isOwnerEmail(resource.data.userEmail)
+            && request.resource.data.userEmail == resource.data.userEmail);
+      allow delete: if isAdmin()
+        || (resource.data.userEmail is string
+            && isOwnerEmail(resource.data.userEmail));
     }
+
     match /employeeFixedOff/{docId} {
-      allow read, write: if request.auth != null;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
+
     match /employeeApprovals/{uid} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == uid;
-      allow update: if request.auth != null;
-      allow delete: if request.auth != null && request.auth.uid == uid;
+      allow read: if isSignedIn();
+      allow create: if isAdmin()
+        || (isSignedIn()
+            && request.auth.uid == uid
+            && request.resource.data.keys().hasAll(['uid', 'email'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.email == request.auth.token.email);
+      allow update, delete: if isAdmin();
     }
+
     match /userPasswordMeta/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
