@@ -32,7 +32,7 @@ npm run deploy
 ```
 
 - `firebase login`으로 한 번 로그인한 뒤, 같은 머신에서 배포하면 됩니다.
-- `npm run watch:hosting`은 `트리맨더스.html` 저장 시 `npx firebase deploy`로 Hosting만 배포합니다(전역 `firebase` 설치 불필요).
+- `npm run watch:hosting`은 `트리맨더스.html` 저장 시 **Git 커밋 → `origin`에 push → Firebase Hosting 배포**까지 자동으로 합니다. GitHub에 로그인·`git push` 권한이 있어야 합니다(전역 `firebase` 설치 불필요).
 
 ## 라이선스 / 비고
 
