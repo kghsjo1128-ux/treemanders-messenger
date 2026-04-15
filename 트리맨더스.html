@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>트리맨더스</title>
-  <!-- treemanders-build: 2026-04-06-four-week-grid -->
+  <!-- treemanders-build: 2026-04-15-directdm-ensure -->
   <style>
     html {
       -webkit-text-size-adjust: 100%;
@@ -1077,7 +1077,13 @@ function loadDmRooms(ownerEmail) {
     if (!r) return [];
     const a = JSON.parse(r);
     if (!Array.isArray(a)) return [];
-    return a.filter((x) => x && x.id && x.type === "dm");
+    return a
+      .filter((x) => x && x.id && x.type === "dm")
+      .map((x) => {
+        const pe = String(x.peerEmail || "").toLowerCase().trim();
+        if (!pe) return x;
+        return x.peerEmail === pe ? x : { ...x, peerEmail: pe };
+      });
   } catch {
     return [];
   }
@@ -2426,6 +2432,7 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
     return defaultGroupRoomSeedMessages();
   });
   const [input, setInput] = useState("");
+  const [dmListenError, setDmListenError] = useState("");
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -2433,39 +2440,73 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
   }, [messages]);
 
   useEffect(() => {
-    if (!useDmFirestore) return undefined;
-    const col = directDmMessagesCol(dmThreadKey);
-    const un = col
-      .orderBy("createdAt", "asc")
-      .limit(400)
-      .onSnapshot(
-        (snap) => {
-          const me = String(firebase.auth().currentUser?.email || "").toLowerCase().trim();
-          const arr = [];
-          snap.forEach((d) => {
-            const data = d.data() || {};
-            const mine = String(data.senderEmail || "").toLowerCase().trim() === me;
-            let timeStr = "";
-            try {
-              const dt = data.createdAt && typeof data.createdAt.toDate === "function" ? data.createdAt.toDate() : null;
-              timeStr = dt ? dt.toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }) : "";
-            } catch (_) {
-              timeStr = "";
+    if (!useDmFirestore) {
+      setDmListenError("");
+      return undefined;
+    }
+    let cancelled = false;
+    let unListen = null;
+    const peerEm = String(room.peerEmail || "").toLowerCase().trim();
+    const myEm = String(currentUser?.email || "").toLowerCase().trim();
+    (async () => {
+      try {
+        setDmListenError("");
+        await ensureDirectDmThreadDoc(dmThreadKey, myEm, peerEm);
+        if (cancelled) return;
+        const col = directDmMessagesCol(dmThreadKey);
+        unListen = col
+          .orderBy("createdAt", "asc")
+          .limit(400)
+          .onSnapshot(
+            (snap) => {
+              const me = String(firebase.auth().currentUser?.email || "").toLowerCase().trim();
+              const arr = [];
+              snap.forEach((d) => {
+                const data = d.data() || {};
+                const mine = String(data.senderEmail || "").toLowerCase().trim() === me;
+                let timeStr = "";
+                try {
+                  const ca = data.createdAt;
+                  let dt = null;
+                  if (ca && typeof ca.toDate === "function") dt = ca.toDate();
+                  else if (ca && typeof ca.seconds === "number") dt = new Date(ca.seconds * 1000);
+                  timeStr = dt ? dt.toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }) : "전송 중…";
+                } catch (_) {
+                  timeStr = "전송 중…";
+                }
+                arr.push({
+                  id: d.id,
+                  sender: mine ? currentUser?.name || "나" : String(data.senderName || room.peerName || "동료"),
+                  text: String(data.text || ""),
+                  time: timeStr,
+                  mine,
+                });
+              });
+              setMessages(arr);
+              setDmListenError("");
+            },
+            (e) => {
+              console.error("[directDm] listen", e);
+              const code = e && e.code ? String(e.code) : "";
+              if (code === "failed-precondition") {
+                setDmListenError("Firestore 설정(인덱스)이 필요할 수 있습니다. 관리자에게 문의하세요.");
+              } else if (code.includes("permission") || code.includes("insufficient")) {
+                setDmListenError("대화를 불러오지 못했습니다. 잠시 후 다시 열거나 관리자에게 문의하세요.");
+              } else {
+                setDmListenError("네트워크 오류로 대화를 불러오지 못했습니다.");
+              }
             }
-            arr.push({
-              id: d.id,
-              sender: mine ? currentUser?.name || "나" : String(data.senderName || room.peerName || "동료"),
-              text: String(data.text || ""),
-              time: timeStr,
-              mine,
-            });
-          });
-          setMessages(arr);
-        },
-        (e) => console.error("[directDm] listen", e)
-      );
-    return () => un();
-  }, [useDmFirestore, dmThreadKey, room.peerName, room.peerEmail, currentUser?.name]);
+          );
+      } catch (e) {
+        console.error("[directDm] prepare", e);
+        if (!cancelled) setDmListenError("대화방을 준비하지 못했습니다. 네트워크를 확인해 주세요.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (typeof unListen === "function") unListen();
+    };
+  }, [useDmFirestore, dmThreadKey, room.peerName, room.peerEmail, currentUser?.name, currentUser?.email]);
 
   useEffect(() => {
     if (!isDm || !dmOwnerEmail || useDmFirestore) return undefined;
@@ -2512,7 +2553,12 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
           if (typeof onDmSent === "function") onDmSent(room, text);
         } catch (e) {
           console.error("[directDm] send", e);
-          window.alert("메시지를 보내지 못했습니다. Firestore에 directDm 규칙이 배포됐는지 확인해 주세요.");
+          const c = e && e.code ? String(e.code) : "";
+          window.alert(
+            c.includes("permission") || c.includes("insufficient")
+              ? "메시지를 보낼 권한이 없습니다. 로그인·승인 상태를 확인해 주세요."
+              : "메시지를 보내지 못했습니다. 네트워크와 Firestore(directDm) 설정을 확인해 주세요."
+          );
         }
       })();
       setInput("");
@@ -2562,6 +2608,11 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
 
   return (
     <div style={styles.chatRoom}>
+      {dmListenError ? (
+        <div style={{ padding: "10px 14px", background: `${COLORS.danger}22`, color: COLORS.danger, fontSize: 13, textAlign: "center", borderBottom: `1px solid ${COLORS.border}` }}>
+          {dmListenError}
+        </div>
+      ) : null}
       <div style={{ ...styles.header, display: "flex", alignItems: "center", gap: 8 }}>
         <button onClick={onBack} style={{ background: "none", border: "none", color: COLORS.text, cursor: "pointer", padding: 4, flexShrink: 0 }}><Icons.Back /></button>
         <span style={{ fontWeight: 700, fontSize: 16, flex: 1, minWidth: 0, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{room.name}</span>
@@ -6098,12 +6149,18 @@ function TreeMandersApp() {
 
   const openDirectChat = useCallback(
     (peer) => {
-      const email = String(peer?.email || "").trim();
+      const emailRaw = String(peer?.email || "").trim();
+      const email = emailRaw.toLowerCase();
       if (!email || !currentUser?.email) return;
-      if (email.toLowerCase() === currentUser.email.toLowerCase()) return;
+      if (email === currentUser.email.toLowerCase()) return;
       const id = dmRoomId(email);
       const name = String(peer.name || "").trim() || email.split("@")[0];
       const owner = currentUser.email;
+      const ownerLo = owner.toLowerCase().trim();
+      const threadKey = dmThreadKeyFromEmails(ownerLo, email);
+      if (threadKey) {
+        ensureDirectDmThreadDoc(threadKey, ownerLo, email).catch((e) => console.error("[directDm] ensure thread (open)", e));
+      }
       setDmRooms((prev) => {
         if (prev.some((r) => r.id === id)) return prev;
         const newRoom = {
