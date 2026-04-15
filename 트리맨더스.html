@@ -622,6 +622,7 @@ function authErrorMessageKo(code) {
     "auth/missing-email": "이메일을 입력해주세요.",
     "auth/requires-recent-login": "보안을 위해 비밀번호를 다시 입력한 뒤 탈퇴를 진행해주세요.",
     "auth/unauthorized-continue-uri": "인증 메일의 돌아올 주소(도메인)가 Firebase에 등록되어 있지 않습니다. Firebase 콘솔 → Authentication → 설정 → 승인된 도메인에 이 사이트 주소(web.app 등)를 추가해 주세요.",
+    "permission-denied": "저장 권한이 없습니다. 앱을 최신 파일로 교체했는지 확인하거나 관리자에게 문의하세요.",
   };
   return map[code] || `오류가 발생했습니다. (${code || "알 수 없음"})`;
 }
@@ -1012,6 +1013,61 @@ function lsKeyDmMessages(ownerEmail) {
 
 function dmRoomId(peerEmail) {
   return "dm:" + String(peerEmail || "").toLowerCase().trim();
+}
+
+/** 두 로그인 이메일로 고정된 1:1 스레드 키 (Firestore directDm 문서 ID와 동일 규칙) */
+function dmThreadKeyFromEmails(emailA, emailB) {
+  const a = String(emailA || "").toLowerCase().trim();
+  const b = String(emailB || "").toLowerCase().trim();
+  if (!a || !b || a === b) return "";
+  const p0 = a < b ? a : b;
+  const p1 = a < b ? b : a;
+  return p0 + "__TM__" + p1;
+}
+
+function directDmDocRef(threadKey) {
+  return firebase.firestore().collection("directDm").doc(String(threadKey || ""));
+}
+
+function directDmMessagesCol(threadKey) {
+  return directDmDocRef(threadKey).collection("messages");
+}
+
+async function ensureDirectDmThreadDoc(threadKey, myEmail, peerEmail) {
+  const key = String(threadKey || "");
+  if (!key) return;
+  const a = String(myEmail || "").toLowerCase().trim();
+  const b = String(peerEmail || "").toLowerCase().trim();
+  if (!a || !b || a === b) return;
+  const p0 = a < b ? a : b;
+  const p1 = a < b ? b : a;
+  if (key !== p0 + "__TM__" + p1) return;
+  await directDmDocRef(key).set(
+    {
+      participants: [p0, p1],
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+async function deleteAllDirectDmThreadMessages(threadKey) {
+  const col = directDmMessagesCol(threadKey);
+  const snap = await col.get();
+  const batches = [];
+  let batch = firebase.firestore().batch();
+  let n = 0;
+  snap.forEach((doc) => {
+    batch.delete(doc.ref);
+    n++;
+    if (n >= 450) {
+      batches.push(batch.commit());
+      batch = firebase.firestore().batch();
+      n = 0;
+    }
+  });
+  if (n) batches.push(batch.commit());
+  await Promise.all(batches);
 }
 
 function loadDmRooms(ownerEmail) {
@@ -1897,7 +1953,8 @@ function RegisterScreen({ onBack }) {
       cred = await firebase.auth().createUserWithEmailAndPassword(regEmail, form.password);
       await cred.user.updateProfile({ displayName: form.name.trim() });
       await firebase.firestore().collection("employeeApprovals").doc(cred.user.uid).set({
-        email: regEmail.toLowerCase().trim(),
+        uid: cred.user.uid,
+        email: cred.user.email || regEmail.toLowerCase().trim(),
         displayName: form.name.trim(),
         status: "pending",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -2356,9 +2413,11 @@ function PasswordChangeScreen({ forced, onSuccess, onCancel }) {
 // ============================================================
 // Component: Chat Room
 // ============================================================
-function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOwnerEmail, canClearChat }) {
+function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOwnerEmail, canClearChat, dmThreadKey }) {
   const isDm = room.type === "dm";
+  const useDmFirestore = !!(isDm && dmThreadKey && currentUser?.email && room.peerEmail);
   const [messages, setMessages] = useState(() => {
+    if (isDm && dmThreadKey && currentUser?.email && room.peerEmail) return [];
     if (isDm && dmOwnerEmail) return getDmMessages(dmOwnerEmail, room.id);
     if (!isDm && persistOwnerEmail) {
       const saved = getGroupRoomMessages(persistOwnerEmail, room.id);
@@ -2374,7 +2433,42 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
   }, [messages]);
 
   useEffect(() => {
-    if (!isDm || !dmOwnerEmail) return undefined;
+    if (!useDmFirestore) return undefined;
+    const col = directDmMessagesCol(dmThreadKey);
+    const un = col
+      .orderBy("createdAt", "asc")
+      .limit(400)
+      .onSnapshot(
+        (snap) => {
+          const me = String(firebase.auth().currentUser?.email || "").toLowerCase().trim();
+          const arr = [];
+          snap.forEach((d) => {
+            const data = d.data() || {};
+            const mine = String(data.senderEmail || "").toLowerCase().trim() === me;
+            let timeStr = "";
+            try {
+              const dt = data.createdAt && typeof data.createdAt.toDate === "function" ? data.createdAt.toDate() : null;
+              timeStr = dt ? dt.toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }) : "";
+            } catch (_) {
+              timeStr = "";
+            }
+            arr.push({
+              id: d.id,
+              sender: mine ? currentUser?.name || "나" : String(data.senderName || room.peerName || "동료"),
+              text: String(data.text || ""),
+              time: timeStr,
+              mine,
+            });
+          });
+          setMessages(arr);
+        },
+        (e) => console.error("[directDm] listen", e)
+      );
+    return () => un();
+  }, [useDmFirestore, dmThreadKey, room.peerName, room.peerEmail, currentUser?.name]);
+
+  useEffect(() => {
+    if (!isDm || !dmOwnerEmail || useDmFirestore) return undefined;
     const sync = () => setMessages(getDmMessages(dmOwnerEmail, room.id));
     sync();
     const h = (e) => {
@@ -2382,7 +2476,7 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
     };
     window.addEventListener("treemanders-dm-messages-updated", h);
     return () => window.removeEventListener("treemanders-dm-messages-updated", h);
-  }, [isDm, room.id, dmOwnerEmail]);
+  }, [isDm, room.id, dmOwnerEmail, useDmFirestore]);
 
   useEffect(() => {
     if (isDm || !persistOwnerEmail) return undefined;
@@ -2402,6 +2496,28 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
     const t = new Date().toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" });
     const text = input.trim();
     if (!text) return;
+    if (useDmFirestore) {
+      const myName = currentUser?.name || "나";
+      const peerEm = String(room.peerEmail || "").toLowerCase().trim();
+      const myEm = String(currentUser?.email || "").toLowerCase().trim();
+      (async () => {
+        try {
+          await ensureDirectDmThreadDoc(dmThreadKey, myEm, peerEm);
+          await directDmMessagesCol(dmThreadKey).add({
+            senderEmail: myEm,
+            senderName: String(myName || "나").slice(0, 120),
+            text: text.slice(0, 8000),
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+          if (typeof onDmSent === "function") onDmSent(room, text);
+        } catch (e) {
+          console.error("[directDm] send", e);
+          window.alert("메시지를 보내지 못했습니다. Firestore에 directDm 규칙이 배포됐는지 확인해 주세요.");
+        }
+      })();
+      setInput("");
+      return;
+    }
     if (isDm && dmOwnerEmail) {
       const myName = currentUser?.name || "나";
       const msg = { id: Date.now(), sender: myName, text, time: t, mine: true };
@@ -2419,7 +2535,22 @@ function ChatRoom({ room, onBack, currentUser, onDmSent, dmOwnerEmail, persistOw
 
   const doClearHistory = () => {
     if (!canClearChat) return;
-    if (!window.confirm("이 채팅방의 기록을 이 기기에서 삭제할까요?")) return;
+    const confirmMsg = useDmFirestore
+      ? "서버에 저장된 이 1:1 대화의 메시지를 모두 삭제합니다. 상대 화면에서도 사라집니다. 계속할까요?"
+      : "이 채팅방의 기록을 이 기기에서 삭제할까요?";
+    if (!window.confirm(confirmMsg)) return;
+    if (useDmFirestore) {
+      (async () => {
+        try {
+          await deleteAllDirectDmThreadMessages(dmThreadKey);
+          setMessages([]);
+        } catch (e) {
+          console.error("[directDm] clear", e);
+          window.alert("삭제하지 못했습니다.");
+        }
+      })();
+      return;
+    }
     if (isDm && dmOwnerEmail) {
       clearDmMessagesForRoom(dmOwnerEmail, room.id);
       setMessages([]);
@@ -6178,6 +6309,7 @@ function TreeMandersApp() {
           onBack={() => setActiveChatRoom(null)}
           currentUser={currentUser}
           dmOwnerEmail={room.type === "dm" ? currentUser?.email : undefined}
+          dmThreadKey={room.type === "dm" ? dmThreadKeyFromEmails(currentUser?.email, room.peerEmail) : ""}
           persistOwnerEmail={room.type === "dm" ? undefined : currentUser?.email}
           onDmSent={room.type === "dm" ? handleDmSent : undefined}
           canClearChat={canClearChatHistory && (room.type === "dm" || room.type === "chat")}
@@ -6376,7 +6508,7 @@ function TreeMandersApp() {
               return (
                 <>
                   <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
-                    승인된 직원·관리자 기준 <strong style={{ color: COLORS.text }}>{peers.length}명</strong> · <strong style={{ color: COLORS.text }}>1:1 채팅</strong>을 누르면 채팅 탭에 대화방이 생깁니다.
+                    승인된 직원·관리자 기준 <strong style={{ color: COLORS.text }}>{peers.length}명</strong> · <strong style={{ color: COLORS.text }}>1:1 채팅</strong>은 Firestore로 동기화되어 동료와 실시간에 가깝게 주고받을 수 있습니다. 채팅 탭에 대화방이 생깁니다.
                   </div>
                   {peers.length === 0 && (
                     <div style={{ ...styles.card, fontSize: 14, color: COLORS.textMuted, lineHeight: 1.55, marginBottom: 16 }}>
