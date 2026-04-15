@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>트리맨더스</title>
-  <!-- treemanders-build: 2026-04-15-directdm-ensure -->
+  <!-- treemanders-build: 2026-04-15-roster-approval-dm -->
   <style>
     html {
       -webkit-text-size-adjust: 100%;
@@ -483,13 +483,30 @@ function applyAuthLanguageKo() {
   } catch (_) {}
 }
 
+/** Firestore employeeApprovals 문서의 승인 상태 (status 문자열 + 레거시 approved 필드). */
+function employeeApprovalCanonicalStatus(row) {
+  const r = row || {};
+  if (r.approved === true || r.approved === "true" || r.approved === 1) return "approved";
+  const stRaw = r.status;
+  if (stRaw === true) return "approved";
+  const st = String(stRaw ?? "").toLowerCase().trim();
+  if (st === "approved" || st === "approve") return "approved";
+  if (st === "rejected" || st === "reject") return "rejected";
+  if (st === "pending" || st === "") return "pending";
+  return "pending";
+}
+
+function isEmployeeApprovalRowApproved(row) {
+  return employeeApprovalCanonicalStatus(row) === "approved";
+}
+
 async function checkSignupApproved(uid, email) {
   if (isSuperAdminEmail(email) || isAdminEmail(email)) return { approved: true };
   try {
     const snap = await firebase.firestore().collection("employeeApprovals").doc(String(uid)).get();
     if (!snap.exists) return { approved: true };
     const d = snap.data() || {};
-    const st = String(d.status || "pending");
+    const st = employeeApprovalCanonicalStatus({ ...d, id: uid });
     if (st === "approved") return { approved: true };
     if (st === "rejected") return { approved: false, message: "가입이 거절되었습니다. 관리자에게 문의하세요." };
     return { approved: false, message: "관리자 승인 대기 중입니다. 이메일 인증을 완료한 뒤, 승인되면 로그인할 수 있습니다." };
@@ -527,6 +544,41 @@ function mergeEmployeeRoster(entry) {
   return list;
 }
 
+/** 직원 관리·고정휴무: 로컬 로스터 + Firestore 가입 명단(다른 PC에서만 가입한 인원 포함). */
+function mergeEmployeeRosterWithFirestoreApprovals(employeeApprovalDocs) {
+  const byEmail = new Map();
+  getEmployeeRoster().forEach((r) => {
+    const email = String(r.email || "").toLowerCase().trim();
+    if (!email) return;
+    const name = String(r.name || "").trim() || email.split("@")[0];
+    byEmail.set(email, {
+      uid: String(r.uid || "").trim(),
+      email: r.email || email,
+      name,
+      approvalStatus: "",
+    });
+  });
+  (employeeApprovalDocs || []).forEach((row) => {
+    const email = String(row.email || row.userEmail || "").toLowerCase().trim();
+    if (!email) return;
+    const aSt = employeeApprovalCanonicalStatus(row);
+    const prev = byEmail.get(email) || {};
+    const disp = String(row.displayName || "").trim();
+    const name =
+      disp ||
+      String(prev.name || "").trim() ||
+      email.split("@")[0];
+    const uid = String(row.uid || row.id || prev.uid || "").trim();
+    byEmail.set(email, {
+      uid,
+      email: row.email || prev.email || email,
+      name,
+      approvalStatus: aSt,
+    });
+  });
+  return [...byEmail.values()].sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
+}
+
 function getAdminEmployeeSelectOptions() {
   const roster = getEmployeeRoster();
   return roster.map((r, i) => ({ key: r.uid || `r-${i}`, name: r.name || r.email, email: r.email || "", fromRoster: true }));
@@ -540,8 +592,7 @@ function getRegionAssignEmployeeSelectOptions(employeeApprovalDocs) {
   const byEmail = new Map();
 
   (employeeApprovalDocs || []).forEach((row) => {
-    const st = String(row.status || "pending").toLowerCase().trim();
-    if (st !== "approved") return;
+    if (!isEmployeeApprovalRowApproved(row)) return;
     const email = String(row.email || row.userEmail || "").toLowerCase().trim();
     if (!email) return;
     const name = String(row.displayName || "").trim() || email.split("@")[0];
@@ -1077,13 +1128,25 @@ function loadDmRooms(ownerEmail) {
     if (!r) return [];
     const a = JSON.parse(r);
     if (!Array.isArray(a)) return [];
-    return a
+    let migrated = false;
+    const out = a
       .filter((x) => x && x.id && x.type === "dm")
       .map((x) => {
-        const pe = String(x.peerEmail || "").toLowerCase().trim();
+        let pe = String(x.peerEmail || "").toLowerCase().trim();
+        if (!pe) {
+          const idStr = String(x.id || "");
+          if (idStr.startsWith("dm:")) pe = idStr.slice(3).toLowerCase().trim();
+        }
         if (!pe) return x;
-        return x.peerEmail === pe ? x : { ...x, peerEmail: pe };
+        if (pe !== String(x.peerEmail || "").toLowerCase().trim()) migrated = true;
+        return pe === String(x.peerEmail || "").toLowerCase().trim() ? x : { ...x, peerEmail: pe };
       });
+    if (migrated) {
+      try {
+        localStorage.setItem(lsKeyDmRooms(ownerEmail), JSON.stringify(out));
+      } catch (_) {}
+    }
+    return out;
   } catch {
     return [];
   }
@@ -1319,7 +1382,7 @@ function colleaguesListMerged(currentEmail, employeeApprovalDocs) {
   const byEmail = new Map();
 
   (employeeApprovalDocs || []).forEach((row) => {
-    if (String(row.status || "pending") !== "approved") return;
+    if (!isEmployeeApprovalRowApproved(row)) return;
     const email = String(row.email || "").toLowerCase().trim();
     if (!email || email === me) return;
     const name = String(row.displayName || "").trim() || email.split("@")[0];
@@ -5253,14 +5316,14 @@ function InAppBrowserHint() {
   );
 }
 
-function AdminEmployeeHrList() {
+function AdminEmployeeHrList({ employeeApprovalsList = [] }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ hireDate: "", salary: "", insurance: "" });
   const [rosterTick, setRosterTick] = useState(0);
   const roster = useMemo(() => {
     void rosterTick;
-    return getEmployeeRoster();
-  }, [rosterTick]);
+    return mergeEmployeeRosterWithFirestoreApprovals(employeeApprovalsList);
+  }, [rosterTick, employeeApprovalsList]);
 
   useEffect(() => {
     const bump = () => setRosterTick((t) => t + 1);
@@ -5286,11 +5349,11 @@ function AdminEmployeeHrList() {
   return (
     <div>
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
-        로그인·가입으로 쌓인 직원 명단 <strong style={{ color: COLORS.text }}>{roster.length}명</strong> · 입사일·급여·보험 메모는 이 기기 브라우저에만 저장됩니다.
+        Firebase 가입 명단 + 이 기기에 로그인한 직원을 합친 명단 <strong style={{ color: COLORS.text }}>{roster.length}명</strong> · 입사일·급여·보험 메모는 이 기기 브라우저에만 저장됩니다.
       </div>
       {roster.length === 0 && (
         <div style={{ ...styles.card, fontSize: 14, color: COLORS.textMuted, textAlign: "center", padding: 24 }}>
-          아직 명단에 직원이 없습니다. 직원이 앱에 로그인하면 여기에 표시됩니다.
+          아직 명단에 직원이 없습니다. 직원이 회원가입하면 Firestore에 쌓이며, 여기에도 표시됩니다.
         </div>
       )}
       {roster.map((r, i) => {
@@ -5304,7 +5367,15 @@ function AdminEmployeeHrList() {
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
               <div style={styles.avatar(40)}>🧑‍💻</div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  {name}
+                  {r.approvalStatus === "pending" ? (
+                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: COLORS.warning }}>(승인 대기)</span>
+                  ) : null}
+                  {r.approvalStatus === "rejected" ? (
+                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: COLORS.danger }}>(거절)</span>
+                  ) : null}
+                </div>
                 <div style={{ fontSize: 12, color: COLORS.textMuted }}>{email}</div>
                 {(hr.hireDate || hr.salary) && (
                   <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6 }}>
@@ -5373,7 +5444,7 @@ function AdminSignupApprovals() {
     );
     return () => un();
   }, []);
-  const rowStatus = (r) => String(r.status || "pending");
+  const rowStatus = (r) => employeeApprovalCanonicalStatus(r);
   const counts = {
     all: rows.length,
     pending: rows.filter((r) => rowStatus(r) === "pending").length,
@@ -5480,15 +5551,15 @@ function AdminSignupApprovals() {
   );
 }
 
-function AdminEmployeeFixedOffEditor({ fixedOffByEmail }) {
-  const roster = getEmployeeRoster();
+function AdminEmployeeFixedOffEditor({ fixedOffByEmail, employeeApprovalsList = [] }) {
+  const roster = mergeEmployeeRosterWithFirestoreApprovals(employeeApprovalsList);
   return (
     <div>
       <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 14, lineHeight: 1.55 }}>
         매주 같은 요일에 쉬는 <strong style={{ color: COLORS.text }}>고정휴무</strong>만 여기서 지정하세요. 스케줄표 하단 <strong style={{ color: COLORS.text }}>월별 집계</strong>에 유연휴무·근무일수·주말휴무가 반영됩니다.
       </div>
       {!roster.length ? (
-        <div style={{ fontSize: 13, color: COLORS.textMuted }}>등록된 직원이 없습니다. 직원이 로그인하면 명단에 쌓입니다.</div>
+        <div style={{ fontSize: 13, color: COLORS.textMuted }}>등록된 직원이 없습니다. 직원이 회원가입하면 명단에 표시됩니다.</div>
       ) : (
         roster.map((r) => {
           const em = String(r.email || "").toLowerCase().trim();
@@ -5678,7 +5749,7 @@ function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail, employ
           <div style={{ flex: 1, overflowY: "auto", padding: "clamp(12px, 3vw, 20px)", minHeight: 0 }}>
             {activeMenu === "roles" && showRoleMenu && <AdminRoleSettings />}
             {/* Members */}
-            {activeMenu === "members" && <AdminEmployeeHrList />}
+            {activeMenu === "members" && <AdminEmployeeHrList employeeApprovalsList={employeeApprovalsList} />}
 
             {activeMenu === "signups" && <AdminSignupApprovals />}
 
@@ -5707,7 +5778,7 @@ function AdminPanel({ onBack, leaveRequests, actorEmail, fixedOffByEmail, employ
                 {holidaySubTab === "schedule" && (
                   <AdminLeaveSchedule leaveRequests={leaveRequests} cursorYM={schedYM} setCursorYM={setSchedYM} />
                 )}
-                {holidaySubTab === "fixed" && <AdminEmployeeFixedOffEditor fixedOffByEmail={fixedOffByEmail} />}
+                {holidaySubTab === "fixed" && <AdminEmployeeFixedOffEditor fixedOffByEmail={fixedOffByEmail} employeeApprovalsList={employeeApprovalsList} />}
                 {holidaySubTab === "list" && (
                   <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>신청 건별 승인·반려</div>
                 )}
